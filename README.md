@@ -22,7 +22,14 @@ under iterated LM paraphrasing, using a drift--diffusion decomposition
     pip install -e .
     ```
 
-3. Create the environment file and add API information:
+3. Initialize the pub-utils submodule and install it editable:
+
+    ```
+    git submodule update --init --recursive
+    pip install -e ./pub-utils
+    ```
+
+4. Create the environment file and add API information:
 
     ```
     cp env_example .env
@@ -52,6 +59,7 @@ under iterated LM paraphrasing, using a drift--diffusion decomposition
 
 ## Related repositories
 
-- `echochain-core` — shared `echochain` + `publication_outputs` packages
+- `echochain-core` — shared `echochain` package
+- `pub-utils` — shared publication figure/table helpers (submodule)
 - `echochains-generation` — base chain generation and analysis
 - `echochains-sim-analysis` — attractor-simulator project

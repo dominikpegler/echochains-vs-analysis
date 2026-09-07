@@ -69,8 +69,8 @@ from echochain.utils import get_data_dir
 # from echochain.icc_utils import compute_icc, interpret_icc
 # from echochain.plot_utils import ci95
 
-# import publication_outputs.figures as F
-# from publication_outputs.tables import TableSpec, write_table
+# import pub_utils.figures as F
+# from pub_utils.tables import TableSpec, write_table
 
 # from transformers import logging
 # logging.set_verbosity_error()  # silence warnings (e.g., "Some weights of the model checkpoint at microsoft/deberta-large-mnli were not used when initializing DebertaForSequenceClassification: ['config']")
@@ -818,7 +818,7 @@ from matplotlib.projections import register_projection
 import matplotlib.spines as spines
 import matplotlib.path as path
 import textwrap
-import publication_outputs.figures as F
+import pub_utils.figures as F
 
 
 F.setup_style(

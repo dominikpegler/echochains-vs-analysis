@@ -1,0 +1,3 @@
+[submodule "pub-utils"]
+	path = pub-utils
+	url = ssh://git@github.com/dominikpegler/pub-utils.git

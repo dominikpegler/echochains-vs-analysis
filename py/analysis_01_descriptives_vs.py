@@ -61,8 +61,8 @@ from echochain.icc_utils import compute_icc
 from echochain.plot_utils import ci95
 from echochain.constants import CONDITION_COLORS, CONDITION_LABELS
 
-import publication_outputs.figures as F
-from publication_outputs.tables import TableSpec, write_table
+import pub_utils.figures as F
+from pub_utils.tables import TableSpec, write_table
 
 from transformers import logging
 
