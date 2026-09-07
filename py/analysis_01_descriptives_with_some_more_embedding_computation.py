@@ -217,7 +217,7 @@ print("Below shards are available:\n")
 print("\n".join([p.name for p in SHARD_ROOT.glob("*")]))
 
 # %%
-from echochain.generate_statistics import write_shards
+from echochain.generate_stats import write_shards
 
 write_shards(logs_dir=LOGS_DIR, shard_root=SHARD_ROOT, metrics_version=METRICS_VERSION)
 
