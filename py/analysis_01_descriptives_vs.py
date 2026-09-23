@@ -1101,38 +1101,9 @@ CONFIG_LABELS = [c.replace("temp", "T").replace("_topp", ", p=") for c in config
 x = np.arange(len(configs))
 
 
-def _config_dotplot(metric_getter, ylabel, fname, ylim=None):
-    fig, axs = F.make_grid(
-        width_mm=186,
-        panels=(1, 1),
-        panel_aspect=0.5,
-        margins=(0.09, 0.13, 0.98, 0.96),
-        constrained=False,
-        flatten=True,
-    )
-    ax = axs[0] if isinstance(axs, (list, np.ndarray)) else axs
-    for condition in CONDITIONS:
-        means = metric_getter(condition)
-        ax.plot(
-            x,
-            means,
-            color=CONDITION_COLORS[condition],
-            marker="o",
-            ms=3,
-            lw=1.2,
-            label=CONDITION_LABELS[condition],
-        )
-    ax.set_xticks(x, CONFIG_LABELS, rotation=45, ha="right")
-    ax.set_xlabel("Decoding config")
-    ax.set_ylabel(ylabel)
-    if ylim is not None:
-        ax.set_ylim(ylim)
-    ax.legend(frameon=False, fontsize=7)
-    F.save(fig, STACKED_PUB / fname, formats=("pdf", "png"), dpi_png=600, tight=True)
-    F.file_dimensions(STACKED_PUB, fname, print_only=True)
-    plt.show()
-    plt.close()
-
+# 5.4. Decoding sensitivity: one three-panel figure (mu, cosine, entailment)
+# by decoding config and condition. Replaces the former separate
+# fig_mu_by_config and fig_fidelity_by_config (merged 2026-09-23).
 
 # 5.4.1. Mean absolute drift by config (mu summary per condition per config)
 def _mu_by_config(condition):
@@ -1149,12 +1120,6 @@ def _mu_by_config(condition):
     return rows
 
 
-_config_dotplot(
-    _mu_by_config,
-    r"Mean absolute drift $|\mu|$",
-    "fig_mu_by_config",
-)
-
 # 5.4.2. Fidelity by config: last-hop cosine and seed->hop entailment
 def _lasthop_by_config(condition, metric):
     df = pd.read_csv(stats_dir(condition) / "metrics_last_hop_cumulative.csv")
@@ -1164,18 +1129,30 @@ def _lasthop_by_config(condition, metric):
 
 fig, axs = F.make_grid(
     width_mm=186,
-    panels=(1, 2),
+    panels=(1, 3),
     panel_aspect=0.62,
     margins=(0.09, 0.13, 0.98, 0.96),
     gutter=(0.05, 0.42),
     constrained=False,
     flatten=True,
 )
-for ax, metric, title in zip(
-    axs, ["cosine", "entail_ab"], ["Cosine similarity to seed", "Seed entails hop"]
-):
+panels = [
+    (
+        lambda cond: _mu_by_config(cond),
+        r"Mean absolute drift $|\mu|$",
+    ),
+    (
+        lambda cond: _lasthop_by_config(cond, "cosine"),
+        "Cosine similarity to seed",
+    ),
+    (
+        lambda cond: _lasthop_by_config(cond, "entail_ab"),
+        "Seed entails hop",
+    ),
+]
+for ax, (getter, title) in zip(axs, panels):
     for condition in CONDITIONS:
-        means = _lasthop_by_config(condition, metric)
+        means = getter(condition)
         ax.plot(
             x,
             means,
@@ -1187,8 +1164,9 @@ for ax, metric, title in zip(
         )
     ax.set_xticks(x, CONFIG_LABELS, rotation=45, ha="right")
     ax.set_title(title, fontsize=7)
-    ax.set_ylim(0, 1)
 axs[0].set_ylabel("Mean at hop 200")
+axs[1].set_ylim(0, 1)
+axs[2].set_ylim(0, 1)
 handles, labels = axs[0].get_legend_handles_labels()
 fig.legend(
     handles,
@@ -1200,9 +1178,9 @@ fig.legend(
     fontsize=7,
 )
 F.save(
-    fig, STACKED_PUB / "fig_fidelity_by_config", formats=("pdf", "png"), dpi_png=600, tight=True
+    fig, STACKED_PUB / "fig_decoding_sensitivity", formats=("pdf", "png"), dpi_png=600, tight=True
 )
-F.file_dimensions(STACKED_PUB, "fig_fidelity_by_config", print_only=True)
+F.file_dimensions(STACKED_PUB, "fig_decoding_sensitivity", print_only=True)
 plt.show()
 plt.close()
 
@@ -1240,7 +1218,7 @@ for ax in AXES:
         summaries[a]["sigma_hop200"].groupby("config")[ax].mean().mean()
         for a in CONDITIONS
     ]
-per_axis[r"Mean"] = [d, w, a]
+per_axis[r"Mean"] = [d, a, w]
 spec = TableSpec(
     caption="Per-axis between-chain variance $\\Sigma$ at hop 200 (mean across configs and seeds), gpt-4.1-nano pilot.",
     label="tab:sigma_per_axis",
