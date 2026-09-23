@@ -138,6 +138,8 @@ KEY_METRICS = [
 ]
 OVERLAY_METRICS = ["cosine", "jaccard"]
 ENTAILMENT_METRICS = ["entail_ab", "entail_ba", "entail_consistent"]
+# all metrics plotted by the two overlay figures (fig_info_core, fig_info_entailment)
+OVERLAY_PLOT_METRICS = OVERLAY_METRICS + ENTAILMENT_METRICS
 OVERLAY_TITLES = {
     "cosine": "Cosine similarity to seed",
     "jaccard": "Lexical Jaccard",
@@ -275,7 +277,7 @@ def write_last_hop_table_for_config(
         use_siunitx=True,
         float_fmt="{:.3f}",
         use_index=False,
-        fontsize_pt=(11, 13),
+        fontsize_pt=(10, 12),
         header_overrides={
             "entail_ab": "entail seed→hop",
             "entail_ba": "entail hop→seed",
@@ -321,7 +323,7 @@ def write_combined_last_hop_table(
         placement="tbp",
         use_siunitx=False,
         float_fmt="{:.3f}",
-        fontsize_pt=(10, 12),
+        fontsize_pt=(9, 11),
         use_index=False,
         group_cmidrules=True,
         group_cmidrules_skip={""},
@@ -434,6 +436,17 @@ def write_icc_table(df_cum, model, configs, pub_dir, condition_label, condition)
 
     model_safe = model.replace(".", "p")
     fname = f"tab_icc_{model_safe}_configs"
+
+    def _widen_icc_column(body, spec_):
+        # The ICC column's inferred siunitx table-format 1.3 underfits the
+        # header row and produced a 5.475pt row overfull per data row
+        # (bisected 2026-09-23; 2.3 fits). si_table_format in pub-utils is a
+        # global override, so patch only the ICC column's spec here.
+        return body.replace(
+            r"begin{tabular}{lllS[table-format=3.3]S[table-format=2.3]S[table-format=1.3]rr}",
+            r"begin{tabular}{lllS[table-format=3.3]S[table-format=2.3]S[table-format=2.3]rr}",
+        )
+
     spec = TableSpec(
         caption=f"""{model.replace("_", " ")} — {condition_label} — Last-hop ICC by outcome and config (group = seed sentence). Outcomes computed at last hop per chain; ICC computed across messages (groups) using per-chain values.""",
         label=f"tab:icc_{model_safe}_configs_{condition}",
@@ -442,10 +455,11 @@ def write_icc_table(df_cum, model, configs, pub_dir, condition_label, condition)
         use_tabularx=False,
         placement="htbp",
         use_siunitx=True,
-        fontsize_pt=(11, 13),
+        fontsize_pt=(10, 12),
         float_fmt="{:.3f}",
         use_index=False,
         numeric_as_r={"$N_{groups}$", "$N$"},
+        post_latex=_widen_icc_column,
     )
     out_path = pub_dir / f"{fname}.tex"
     write_table(t, out_path, spec)
@@ -621,7 +635,7 @@ def process_condition(condition):
         ["metric", "hop", "value"]
     ].copy()
     s["overlay"] = (
-        stacked[stacked["metric"].isin(OVERLAY_METRICS)]
+        stacked[stacked["metric"].isin(OVERLAY_PLOT_METRICS)]
         .groupby(["metric", "hop"])["value"]
         .mean()
         .reset_index()
@@ -1213,7 +1227,7 @@ spec = TableSpec(
     use_tabularx=False,
     placement="htbp",
     use_siunitx=True,
-    fontsize_pt=(11, 13),
+    fontsize_pt=(9, 11),
     float_fmt="{:.4f}",
     use_index=False,
 )
@@ -1235,7 +1249,7 @@ spec = TableSpec(
     use_tabularx=False,
     placement="htbp",
     use_siunitx=True,
-    fontsize_pt=(11, 13),
+    fontsize_pt=(9, 11),
     float_fmt="{:.4f}",
     use_index=False,
 )
@@ -1254,7 +1268,7 @@ spec = TableSpec(
     use_tabularx=False,
     placement="htbp",
     use_siunitx=True,
-    fontsize_pt=(11, 13),
+    fontsize_pt=(9, 11),
     float_fmt="{:.5f}",
     use_index=False,
 )
@@ -1279,7 +1293,7 @@ spec = TableSpec(
     use_tabularx=False,
     placement="htbp",
     use_siunitx=True,
-    fontsize_pt=(11, 13),
+    fontsize_pt=(9, 11),
     float_fmt="{:.4f}",
     use_index=False,
 )
