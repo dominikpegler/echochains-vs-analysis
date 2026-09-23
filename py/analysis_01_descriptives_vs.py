@@ -136,12 +136,16 @@ KEY_METRICS = [
     "entail_consistent",
     "k_unique",
 ]
-OVERLAY_METRICS = ["cosine", "jaccard", "entail_ab", "entail_consistent"]
+OVERLAY_METRICS = ["cosine", "jaccard"]
+ENTAILMENT_METRICS = ["entail_ab", "entail_ba", "entail_consistent"]
 OVERLAY_TITLES = {
     "cosine": "Cosine similarity to seed",
     "jaccard": "Lexical Jaccard",
-    "entail_ab": "NLI entailment (seed to hop)",
-    "entail_consistent": "NLI entailment (consistent)",
+}
+ENTAILMENT_TITLES = {
+    "entail_ab": "Seed entails hop",
+    "entail_ba": "Hop entails seed",
+    "entail_consistent": "Mutual entailment",
 }
 ANCHOR_VALUES = {
     "delta_len": 0.0,
@@ -510,8 +514,8 @@ def write_metrics_pub(df_cum, models, configs, pub_dir):
 
 def sigma_curve_position(df_axis):
     var = df_axis.groupby(["config", "msg_id", "hop"])[AXES].var(ddof=1)
-    var["composite"] = var[AXES].mean(axis=1)
-    return var.groupby("hop")["composite"].mean().reset_index()
+    var["mean_sigma"] = var[AXES].mean(axis=1)
+    return var.groupby("hop")["mean_sigma"].mean().reset_index()
 
 
 def sigma_curve_position_per_axis(df_axis):
@@ -535,7 +539,7 @@ def drift_slopes(df_axis):
 def drift_summary(df_axis):
     slopes = drift_slopes(df_axis)
     mu = slopes[AXES].mean()
-    mu["composite_abs"] = mu.abs().mean()
+    mu["mean_abs"] = mu.abs().mean()
     return mu
 
 
@@ -625,7 +629,7 @@ def process_condition(condition):
     s["sigma_curve_position"] = sigma_curve_position(df_axis)
     s["sigma_curve_per_axis"] = sigma_curve_position_per_axis(df_axis)
     s["sigma_hop200"] = sigma_axis_position(df_axis, HOP)
-    s["sigma_hop200"]["composite"] = s["sigma_hop200"][AXES].mean(axis=1)
+    s["sigma_hop200"]["mean_sigma"] = s["sigma_hop200"][AXES].mean(axis=1)
     s["mu"] = drift_summary(df_axis)
     s["drift_slopes"] = drift_slopes(df_axis)
     s["cloud"] = (
@@ -793,11 +797,11 @@ sensitivity = pd.read_csv(
     STATS_BASE / "sigma_exploratory" / "sigma_sensitivity_drop_poison_cells.csv"
 )
 
-w = headline.loc[headline["condition"] == "vs_weighted", "mean_composite_sigma"].values[
+w = headline.loc[headline["condition"] == "vs_weighted", "mean_sigma"].values[
     0
 ]
-d = headline.loc[headline["condition"] == "direct", "mean_composite_sigma"].values[0]
-a = headline.loc[headline["condition"] == "vs_argmax", "mean_composite_sigma"].values[0]
+d = headline.loc[headline["condition"] == "direct", "mean_sigma"].values[0]
+a = headline.loc[headline["condition"] == "vs_argmax", "mean_sigma"].values[0]
 print(f"headline: direct={d:.6f} weighted={w:.6f} argmax={a:.6f}")
 print(f"weighted/direct ratio = {w/d:.2f}; weighted/argmax ratio = {w/a:.2f}")
 print(
@@ -848,13 +852,13 @@ configs = sorted(summaries["direct"]["sigma_hop200"]["config"].unique())
 # ### 5.1. Composite between-chain diffusion figure
 #
 # Single 2x2 figure that combines the trajectory cloud (one seed, Direct vs
-# VS-weighted), the Sigma(h) time course (composite over the five axes), and
+# VS-weighted), the Sigma(h) time course (mean over the five axes), and
 # Sigma at hop 200 by decoding config. Panels: (a) Direct trajectories,
-# (b) VS-weighted trajectories, (c) composite Sigma(h) curves, (d) composite
+# (b) VS-weighted trajectories, (c) mean Sigma(h) curves, (d) mean
 # Sigma at hop 200 by config.
 
 # %%
-fname = "fig_sigma_composite"
+fname = "fig_sigma_headline"
 
 fig, axs = F.make_grid(
     width_mm=184,
@@ -889,19 +893,19 @@ plot_cloud(
     ylim=ylim,
 )
 
-# Bottom left: Sigma(h) curves, composite only
+# Bottom left: Sigma(h) curves, mean over axes
 ylim = (-0.01, 0.1)
 for condition in CONDITIONS:
     c = summaries[condition]["sigma_curve_position"]
     axs[2].plot(
         c["hop"],
-        c["composite"],
+        c["mean_sigma"],
         color=CONDITION_COLORS[condition],
         label=CONDITION_LABELS[condition],
     )
 axs[2].set_xlabel("Hop")
-axs[2].set_title(r"Mean composite $\Sigma$ over hops")
-axs[2].set_ylabel(r"Composite $\Sigma$")
+axs[2].set_title(r"Mean between-chain variance $\Sigma$ over hops")
+axs[2].set_ylabel(r"Mean $\Sigma$")
 axs[2].legend(frameon=False)
 axs[2].set_ylim(ylim)
 
@@ -909,7 +913,7 @@ axs[2].set_ylim(ylim)
 x = np.arange(len(configs))
 for condition in CONDITIONS:
     s = summaries[condition]["sigma_hop200"]
-    means = s.groupby("config")["composite"].mean().reindex(configs).to_numpy()
+    means = s.groupby("config")["mean_sigma"].mean().reindex(configs).to_numpy()
     axs[3].plot(
         x,
         means,
@@ -920,7 +924,7 @@ for condition in CONDITIONS:
         label=CONDITION_LABELS[condition],
     )
     for i, cfg in enumerate(configs):
-        vals = s.loc[s["config"] == cfg, "composite"].to_numpy()
+        vals = s.loc[s["config"] == cfg, "mean_sigma"].to_numpy()
         axs[3].scatter(
             np.full_like(vals, x[i])
             + np.random.default_rng(0).uniform(-0.12, 0.12, len(vals)),
@@ -936,7 +940,7 @@ axs[3].set_xticks(
     rotation=45,
     ha="right",
 )
-axs[3].set_title(r"Composite $\Sigma$ at hop 200")
+axs[3].set_title(r"Mean $\Sigma$ at hop 200")
 axs[3].set_yticklabels([])
 axs[3].legend(frameon=False)
 axs[3].set_ylim(ylim)
@@ -947,67 +951,79 @@ plt.show()
 plt.close()
 
 # %% [markdown]
-# ### 5.2. Information-preservation overlay (cosine, jaccard, entailment)
+# ### 5.2. Information-preservation overlays (core + entailment)
+#
+# Two figures: fig_info_core (cosine + Jaccard) and fig_info_entailment
+# (seed->hop, hop->seed, mutual entailment). The manuscript references
+# them as fig:info-core and fig:info-entailment.
 
 # %%
-fname = "fig_info_preservation_overlay"
-ncols = 2
-fig, axs = F.make_grid(
-    width_mm=186,
-    panels=(2, ncols),
-    panel_aspect=0.62,
-    constrained=False,
-    flatten=True,
-    margins=(0.07, 0.06, 0.99, 0.955),
-    gutter=(0.05, 0.42),
-    sharey=True,
-)
-for i, (ax, m) in enumerate(zip(axs, OVERLAY_METRICS)):
-    for condition in CONDITIONS:
-        c = summaries[condition]["overlay"]
-        sub = c[c["metric"] == m].sort_values("hop")
-        anchor = ANCHOR_VALUES.get(m)
-        xs = [0] + sub["hop"].tolist() if anchor is not None else sub["hop"].tolist()
-        ys = (
-            [anchor] + sub["value"].tolist()
-            if anchor is not None
-            else sub["value"].tolist()
-        )
-        ax.plot(
-            xs,
-            ys,
-            color=CONDITION_COLORS[condition],
-            lw=1.2,
-            label=CONDITION_LABELS[condition],
-        )
-    ax.set_xlabel("Hop")
-    if i % ncols == 0:
-        ax.set_ylabel("Similarity")
-    ax.set_title(OVERLAY_TITLES[m])
-    ax.set_ylim(0, 1)
 
-handles, labels = axs[0].get_legend_handles_labels()
-fig.legend(
-    handles,
-    labels,
-    loc="upper center",
-    bbox_to_anchor=(0.5, -0.05),
-    ncol=len(CONDITIONS),
-    frameon=False,
-    fontsize=7,
-)
 
-F.save(fig, STACKED_PUB / fname, formats=("pdf", "png"), dpi_png=600, tight=True)
-F.file_dimensions(STACKED_PUB, fname, print_only=True)
-plt.show()
-plt.close()
+def _overlay_figure(metrics, titles, fname, ylabel):
+    ncols = len(metrics)
+    fig, axs = F.make_grid(
+        width_mm=186,
+        panels=(1, ncols),
+        panel_aspect=0.62,
+        constrained=False,
+        flatten=True,
+        margins=(0.07, 0.06, 0.99, 0.955),
+        gutter=(0.05, 0.42),
+        sharey=True,
+    )
+    for i, (ax, m) in enumerate(zip(axs, metrics)):
+        for condition in CONDITIONS:
+            c = summaries[condition]["overlay"]
+            sub = c[c["metric"] == m].sort_values("hop")
+            anchor = ANCHOR_VALUES.get(m)
+            xs = [0] + sub["hop"].tolist() if anchor is not None else sub["hop"].tolist()
+            ys = (
+                [anchor] + sub["value"].tolist()
+                if anchor is not None
+                else sub["value"].tolist()
+            )
+            ax.plot(
+                xs,
+                ys,
+                color=CONDITION_COLORS[condition],
+                lw=1.2,
+                label=CONDITION_LABELS[condition],
+            )
+        ax.set_xlabel("Hop")
+        if i == 0:
+            ax.set_ylabel(ylabel)
+        ax.set_title(titles[m])
+        ax.set_ylim(0, 1)
+
+    handles, labels = axs[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.05),
+        ncol=len(CONDITIONS),
+        frameon=False,
+        fontsize=7,
+    )
+
+    F.save(fig, STACKED_PUB / fname, formats=("pdf", "png"), dpi_png=600, tight=True)
+    F.file_dimensions(STACKED_PUB, fname, print_only=True)
+    plt.show()
+    plt.close()
+
+
+_overlay_figure(OVERLAY_METRICS, OVERLAY_TITLES, "fig_info_core", "Similarity")
+_overlay_figure(
+    ENTAILMENT_METRICS, ENTAILMENT_TITLES, "fig_info_entailment", "Probability"
+)
 
 # %% [markdown]
 # ### 5.3. Per-axis Sigma(h) curves (supplementary)
 #
 # One panel per semantic axis, three conditions overlaid, aggregated over all
 # seeds and decoding configs. This is the aggregate view that complements the
-# single-seed trajectory clouds in fig:sigma-composite; it shows that the
+# single-seed trajectory clouds in fig:sigma-headline; it shows that the
 # between-chain diffusion increase under VS-weighted is not restricted to the
 # factual-to-narrative axis.
 
@@ -1058,6 +1074,125 @@ plt.show()
 plt.close()
 
 # %% [markdown]
+# ### 5.4. Decoding-sensitivity figures (supplementary)
+#
+# fig_mu_by_config: mean absolute drift at hop 200 per config and condition,
+# with the +/-0.005 equivalence bound. fig_fidelity_by_config: last-hop
+# cosine and seed->hop entailment per config and condition. Both show that
+# the condition ordering is invariant across the nine-config grid, which
+# justifies fixing temperature 0.8 / top-p 0.5 in the confirmatory study.
+
+# %%
+CONFIG_LABELS = [c.replace("temp", "T").replace("_topp", ", p=") for c in configs]
+x = np.arange(len(configs))
+
+
+def _config_dotplot(metric_getter, ylabel, fname, ylim=None):
+    fig, axs = F.make_grid(
+        width_mm=186,
+        panels=(1, 1),
+        panel_aspect=0.5,
+        margins=(0.09, 0.13, 0.98, 0.96),
+        constrained=False,
+        flatten=True,
+    )
+    ax = axs[0] if isinstance(axs, (list, np.ndarray)) else axs
+    for condition in CONDITIONS:
+        means = metric_getter(condition)
+        ax.plot(
+            x,
+            means,
+            color=CONDITION_COLORS[condition],
+            marker="o",
+            ms=3,
+            lw=1.2,
+            label=CONDITION_LABELS[condition],
+        )
+    ax.set_xticks(x, CONFIG_LABELS, rotation=45, ha="right")
+    ax.set_xlabel("Decoding config")
+    ax.set_ylabel(ylabel)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    ax.legend(frameon=False, fontsize=7)
+    F.save(fig, STACKED_PUB / fname, formats=("pdf", "png"), dpi_png=600, tight=True)
+    F.file_dimensions(STACKED_PUB, fname, print_only=True)
+    plt.show()
+    plt.close()
+
+
+# 5.4.1. Mean absolute drift by config (mu summary per condition per config)
+def _mu_by_config(condition):
+    s = summaries[condition]["drift_slopes"]
+    rows = []
+    for cfg, grp in s.groupby("config"):
+        # mean of the absolute per-axis slopes, averaged over chains:
+        # this reproduces the manuscript's mean absolute drift summary
+        per_chain_abs = grp[AXES].abs().mean(axis=1)
+        rows.append({"config": cfg, "mean_abs": per_chain_abs.mean()})
+    rows = (
+        pd.DataFrame(rows).set_index("config").reindex(configs)["mean_abs"].to_numpy()
+    )
+    return rows
+
+
+_config_dotplot(
+    _mu_by_config,
+    r"Mean absolute drift $|\mu|$",
+    "fig_mu_by_config",
+)
+
+# 5.4.2. Fidelity by config: last-hop cosine and seed->hop entailment
+def _lasthop_by_config(condition, metric):
+    df = pd.read_csv(stats_dir(condition) / "metrics_last_hop_cumulative.csv")
+    df = df[(df["metric"] == metric) & (df["hop"] == HOP)]
+    return df.groupby("config")["value"].mean().reindex(configs).to_numpy()
+
+
+fig, axs = F.make_grid(
+    width_mm=186,
+    panels=(1, 2),
+    panel_aspect=0.62,
+    margins=(0.09, 0.13, 0.98, 0.96),
+    gutter=(0.05, 0.42),
+    constrained=False,
+    flatten=True,
+)
+for ax, metric, title in zip(
+    axs, ["cosine", "entail_ab"], ["Cosine similarity to seed", "Seed entails hop"]
+):
+    for condition in CONDITIONS:
+        means = _lasthop_by_config(condition, metric)
+        ax.plot(
+            x,
+            means,
+            color=CONDITION_COLORS[condition],
+            marker="o",
+            ms=3,
+            lw=1.2,
+            label=CONDITION_LABELS[condition],
+        )
+    ax.set_xticks(x, CONFIG_LABELS, rotation=45, ha="right")
+    ax.set_title(title, fontsize=7)
+    ax.set_ylim(0, 1)
+axs[0].set_ylabel("Mean at hop 200")
+handles, labels = axs[0].get_legend_handles_labels()
+fig.legend(
+    handles,
+    labels,
+    loc="upper center",
+    bbox_to_anchor=(0.5, -0.05),
+    ncol=len(CONDITIONS),
+    frameon=False,
+    fontsize=7,
+)
+F.save(
+    fig, STACKED_PUB / "fig_fidelity_by_config", formats=("pdf", "png"), dpi_png=600, tight=True
+)
+F.file_dimensions(STACKED_PUB, "fig_fidelity_by_config", print_only=True)
+plt.show()
+plt.close()
+
+# %% [markdown]
 # ## 6. Sigma tables
 
 # %%
@@ -1065,13 +1200,13 @@ plt.close()
 headline_tbl = pd.DataFrame(
     {
         "Condition": [CONDITION_LABELS[a] for a in CONDITIONS],
-        r"Composite $\Sigma$": [d, a, w],
+        r"Mean $\Sigma$": [d, a, w],
         r"Ratio vs Direct": [1.0, a / d, w / d],
         r"Ratio vs VS-weighted": [d / w, a / w, 1.0],
     }
 )
 spec = TableSpec(
-    caption="Composite between-chain variance $\\Sigma$ at hop 200 (mean across 9 decoding configs and 50 seeds), gpt-4.1-nano pilot. Composite $\\Sigma$ is the mean between-chain variance across the five semantic axes; ratios are computed on the composite.",
+    caption="Mean between-chain variance $\\Sigma$ at hop 200 (mean across 9 decoding configs and 50 seeds), gpt-4.1-nano pilot. Mean $\\Sigma$ is the mean between-chain variance across the five semantic axes; ratios are computed on this mean.",
     label="tab:sigma_headline",
     wrap="threeparttable",
     width="2col",
@@ -1091,7 +1226,7 @@ for ax in AXES:
         summaries[a]["sigma_hop200"].groupby("config")[ax].mean().mean()
         for a in CONDITIONS
     ]
-per_axis[r"Composite"] = [d, w, a]
+per_axis[r"Mean"] = [d, w, a]
 spec = TableSpec(
     caption="Per-axis between-chain variance $\\Sigma$ at hop 200 (mean across configs and seeds), gpt-4.1-nano pilot.",
     label="tab:sigma_per_axis",
@@ -1110,9 +1245,9 @@ write_table(per_axis, STACKED_PUB / "tab_sigma_per_axis.tex", spec)
 mu_tbl = pd.DataFrame({"Condition": [CONDITION_LABELS[a] for a in CONDITIONS]})
 for ax in AXES:
     mu_tbl[AXIS_LABELS[ax]] = [summaries[a]["mu"][ax] for a in CONDITIONS]
-mu_tbl[r"Composite $|\mu|$"] = [summaries[a]["mu"]["composite_abs"] for a in CONDITIONS]
+mu_tbl[r"Mean $|\mu|$"] = [summaries[a]["mu"]["mean_abs"] for a in CONDITIONS]
 spec = TableSpec(
-    caption="Per-axis drift $\\mu$ (mean ordinary least squares slope of axis score on hop, per chain), gpt-4.1-nano pilot. Composite $|\\mu|$ is the mean absolute drift across the five axes.",
+    caption="Per-axis drift $\\mu$ (mean ordinary least squares slope of axis score on hop, per chain), gpt-4.1-nano pilot. Mean $|\\mu|$ is the mean absolute drift across the five axes.",
     label="tab:mu_per_axis",
     wrap="threeparttable",
     width="2col",
@@ -1137,7 +1272,7 @@ sens_tbl = pd.DataFrame(
     }
 )
 spec = TableSpec(
-    caption="Sensitivity check: composite $\\Sigma$ at hop 200 after dropping all 18 poison-affected seed x config cells. 21 of 8,100 chains (0.26\\%) were excluded as deterministically crash-poisoned; the 18 affected seed x config cells are dropped entirely here.",
+    caption="Sensitivity check: mean $\\Sigma$ at hop 200 after dropping all 18 poison-affected seed x config cells. 21 of 8,100 chains (0.26\\%) were excluded as deterministically crash-poisoned; the 18 affected seed x config cells are dropped entirely here.",
     label="tab:sigma_sensitivity",
     wrap="threeparttable",
     width="2col",
@@ -1186,7 +1321,7 @@ sigma_section = {
 }
 mu_section = {
     condition: {ax: float(summaries[condition]["mu"][ax]) for ax in AXES}
-    | {"composite_abs": float(summaries[condition]["mu"]["composite_abs"])}
+    | {"mean_abs": float(summaries[condition]["mu"]["mean_abs"])}
     for condition in CONDITIONS
 }
 
@@ -1197,13 +1332,13 @@ def _minmax(series):
 
 sigma_by_config = {
     condition: _minmax(
-        summaries[condition]["sigma_hop200"].groupby("config")["composite"].mean()
+        summaries[condition]["sigma_hop200"].groupby("config")["mean_sigma"].mean()
     )
     for condition in CONDITIONS
 }
 ratio_by_config = (
-    summaries["vs_weighted"]["sigma_hop200"].groupby("config")["composite"].mean()
-    / summaries["direct"]["sigma_hop200"].groupby("config")["composite"].mean()
+    summaries["vs_weighted"]["sigma_hop200"].groupby("config")["mean_sigma"].mean()
+    / summaries["direct"]["sigma_hop200"].groupby("config")["mean_sigma"].mean()
 )
 
 # %% [markdown]
@@ -1251,11 +1386,11 @@ def unique_hop200_texts(condition, config, msg_id):
 
 examples_section = {}
 
-# 8.1. Sigma divergence: seed with the largest composite between-chain variance
+# 8.1. Sigma divergence: seed with the largest mean between-chain variance
 # under VS-weighted at the default config.
 sh = summaries["vs_weighted"]["sigma_hop200"]
 sh = sh[sh["config"] == CONFIG]
-sigma_seed = sh.loc[sh["composite"].idxmax(), "msg_id"]
+sigma_seed = sh.loc[sh["mean_sigma"].idxmax(), "msg_id"]
 sigma_seed_text, _ = load_chain_texts("vs_weighted", CONFIG, sigma_seed, 1)
 examples_section["sigma_divergence"] = {
     "msg_id": sigma_seed,

@@ -6,7 +6,7 @@ native crashes). Each poisoned chain removes one of the 9 chains of its
 with 8 chains, but the affected cells are the only cells with incomplete
 within-cell coverage.
 
-This script recomputes the composite Sigma tables with every affected
+This script recomputes the mean-Sigma tables with every affected
 (msg_id, config) cell DROPPED entirely (strictest check) and compares the
 headline contrasts to the full-data run from compute_sigma_exploratory.py.
 
@@ -84,14 +84,14 @@ def main():
 
         pos = sigma_axis_position(df_axis, HOP)
         disp = sigma_axis_displacement(df_axis, HOP)
-        pos["composite"] = pos[AXES].mean(axis=1)
-        disp["composite"] = disp[AXES].mean(axis=1)
+        pos["mean_sigma"] = pos[AXES].mean(axis=1)
+        disp["mean_sigma"] = disp[AXES].mean(axis=1)
 
         for name, df in [("position", pos), ("displacement", disp)]:
-            headline[(arm, name)] = df["composite"].mean()
+            headline[(arm, name)] = df["mean_sigma"].mean()
         print(f"{arm}: cells {n_before} -> {n_after} after drop")
 
-    print("\n===== Sensitivity: composite Sigma, affected cells dropped =====")
+    print("\n===== Sensitivity: mean Sigma, affected cells dropped =====")
     rows = []
     for name in ["position", "displacement"]:
         rows.append(
