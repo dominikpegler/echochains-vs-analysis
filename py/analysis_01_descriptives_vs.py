@@ -704,6 +704,9 @@ for condition in CONDITIONS:
 # VS-argmax (bottom). Written into pub/descriptives_vs/ and referenced by
 # the manuscript as fig:pilot-cum-{surface,factual,semantic}.
 
+# %% [markdown]
+# Setup
+
 # %%
 F.setup_style(
     profile="nature", use_tex=False, base_font=7, minor_ticks=False, title_font_delta=0
@@ -760,6 +763,10 @@ def plot_measure_row(
     return axs
 
 
+# %% [markdown]
+# Run
+
+# %%
 for layer, (measures, bounded) in STACKED_LAYER_SPECS.items():
     if type(bounded) == bool:
         bounded = [bounded] * len(measures)
@@ -964,6 +971,7 @@ F.file_dimensions(STACKED_PUB, fname, print_only=True)
 plt.show()
 plt.close()
 
+
 # %% [markdown]
 # ### 5.2. Information-preservation overlays (core + entailment)
 #
@@ -972,8 +980,6 @@ plt.close()
 # them as fig:info-core and fig:info-entailment.
 
 # %%
-
-
 def _overlay_figure(metrics, titles, fname, ylabel):
     ncols = len(metrics)
     fig, axs = F.make_grid(
@@ -1132,7 +1138,7 @@ fig, axs = F.make_grid(
     panels=(1, 3),
     panel_aspect=0.62,
     margins=(0.09, 0.13, 0.98, 0.96),
-    gutter=(0.05, 0.42),
+    gutter=(0.15, 0.42),
     constrained=False,
     flatten=True,
 )
@@ -1172,7 +1178,7 @@ fig.legend(
     handles,
     labels,
     loc="upper center",
-    bbox_to_anchor=(0.5, -0.05),
+    bbox_to_anchor=(0.5, -0.25),
     ncol=len(CONDITIONS),
     frameon=False,
     fontsize=7,
@@ -1476,5 +1482,3 @@ for condition in CONDITIONS:
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(pub, f, ensure_ascii=False, indent=2)
     print("Wrote", out_json)
-
-# %%
