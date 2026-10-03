@@ -1007,11 +1007,27 @@ def run_examples():
         },
     }
 
+    # mu section (the notebook also writes per-condition mu; the manuscript
+    # macros descend desc.mu.<condition>.<axis>, and a missing "mu" key
+    # reproduces as nil in json-read -> elisp listp(nil) is t -> the
+    # getter's "List index must be int" error, which aborted the export
+    # on 2026-10-03).
+    mu_section = {}
+    for condition in CONDITIONS:
+        df_axis = load_axis(condition)
+        mu = drift_summary(df_axis)
+        del df_axis
+        gc.collect()
+        mu_section[condition] = (
+            {ax: float(mu[ax]) for ax in AXES}
+            | {"mean_abs": float(mu["mean_abs"])})
+
     for condition in CONDITIONS:
         out_json = (PUB_BASE / CONDITION_CONFIG[condition]["analysis_name"]
                     / "metrics_pub.json")
         pub = json.load(open(out_json, encoding="utf-8"))
         pub["sigma"] = sigma_section
+        pub["mu"] = mu_section
         pub["exploratory"] = exploratory
         with open(out_json, "w", encoding="utf-8") as f:
             json.dump(pub, f, ensure_ascii=False, indent=2)
