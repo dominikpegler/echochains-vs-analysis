@@ -23,8 +23,12 @@ Inputs (published exports, no LM calls, no refitting):
   DATA_DIR/data/echodrift_stats/vs_weighted/metrics_cumulative_long.csv
 
 Outputs (PDF + PNG 300 dpi) into the deck's img/ directory:
-  slide_sigma_headline.png        (merged cloud + Sigma(h) + Sigma hop200)
+  slide_sigma_headline.png        (merged cloud + Sigma(h) + Sigma hop200;
+                                   kept as the generator's 2x2 variant)
   slide_sigma_per_axis_curves.png (1x5 per-axis Sigma(h), two lines)
+  slide_sigma_overview.png        (pass 3 headline: 1x5 per-axis row +
+                                   two aggregate panels)
+  slide_sigma_cloud.png           (the merged cloud alone, sample named)
   slide_drift_direction.png       (endpoint drift per axis, Direct vs VS)
 
 Same sigma definitions as the paper analysis (echochain.diffusion):
@@ -144,7 +148,8 @@ def pick_widening_seed(summaries, axis, config=CFG):
     return diff.index[0]
 
 
-def plot_cloud(ax, df_axis_by_condition, msg_id, axis, yaxis=True, legend=True):
+def plot_cloud(ax, df_axis_by_condition, msg_id, axis, yaxis=True, legend=True,
+               title=None):
     """One merged cloud: all chains of every SLIDE_CONDITIONS condition.
 
     2026-10-03: the former two side-by-side cloud panels (Direct left,
@@ -170,7 +175,8 @@ def plot_cloud(ax, df_axis_by_condition, msg_id, axis, yaxis=True, legend=True):
         )
     ax.set_xlabel("Hop")
     ax.set_ylabel(AXIS_LABELS[axis] if yaxis else "")
-    ax.set_title("Chain trajectories on one axis", fontsize=FTITLE, color="#000")
+    if title is not None:
+        ax.set_title(title, fontsize=FTITLE, color="#000")
     if legend:
         handles = [
             Line2D(
@@ -222,6 +228,113 @@ def save_fig(fig, fname):
         dst.write_bytes(src.read_bytes())
     print(f"deck copy: {DECK_IMG / (fname + '.png')}")
     plt.close(fig)
+
+
+def cloud_figure(summaries, seed):
+    """The merged trajectory cloud as its own figure (deck TODO pass 3).
+
+    One seed, the default decoding config, nine chains per condition on
+    the factual-vs-narrative axis; the sample is named in the title so
+    the aggregation is explicit (user: the title must say what the
+    trajectories are). The legend carries each condition's Sigma at hop
+    200 (the seed-specific extreme values; 0.0001 vs 0.0728).
+    """
+    fig, ax = plt.subplots(figsize=(mm_to_in(160), mm_to_in(88)))
+    fig.subplots_adjust(left=0.09, right=0.99, top=0.90, bottom=0.13)
+    plot_cloud(
+        ax, {c: summaries[c]["cloud"] for c in SLIDE_CONDITIONS}, seed,
+        "factual_to_narrative", yaxis=True, title=None,
+    )
+    ax.set_title(
+        rf"Seed {seed}, default decoding config, nine chains per condition",
+        fontsize=FTITLE, color="#000",
+    )
+    return fig
+
+
+def sigma_overview_figure(summaries):
+    """All-axes headline: 1x5 per-axis Sigma(h) + the two aggregate panels.
+
+    Deck TODO pass 3 (user: one axis alone is not convincing as the main
+    result): the findings slide now shows all five axes and the summary
+    in one figure. Top row: per-axis between-chain Sigma over hops
+    (Direct grey, VS magenta; averaged over seeds and configs). Bottom
+    row: mean over the five axes over hops, and mean Sigma at hop 200
+    per decoding config. This figure absorbs the former per-axis backup
+    child's figure (slide_sigma_per_axis_curves = the top row alone).
+    """
+    fig = plt.figure(figsize=(mm_to_in(230), mm_to_in(120)))
+    gs = fig.add_gridspec(
+        2, 5,
+        left=0.065, right=0.995, top=0.93, bottom=0.17,
+        hspace=0.52, wspace=0.24,
+    )
+    axs_top = [fig.add_subplot(gs[0, i]) for i in range(5)]
+
+    # Top row: per-axis Sigma(h), averaged over seeds and configs
+    for i, (ax, axis) in enumerate(zip(axs_top, AXES)):
+        for condition in SLIDE_CONDITIONS:
+            c = summaries[condition]["sigma_curve_per_axis"]
+            ax.plot(
+                c["hop"],
+                c[axis],
+                color=CONDITION_COLORS[condition],
+                lw=FLW,
+                label=CONDITION_LABELS[condition],
+            )
+        ax.set_xlabel("Hop")
+        ax.set_title(AXIS_LABELS[axis], fontsize=FTITLE, color="#000")
+        ax.set_ylim(-0.005, 0.05)
+        if i > 0:
+            ax.tick_params(labelleft=False)
+    axs_top[0].set_ylabel(r"Per-axis $\Sigma$")
+
+    # Bottom left (spanning ~2.5 columns): mean Sigma over hops
+    ax_mean = fig.add_subplot(gs[1, :2])
+    for condition in SLIDE_CONDITIONS:
+        c = summaries[condition]["sigma_curve_position"]
+        ax_mean.plot(
+            c["hop"],
+            c["mean_sigma"],
+            color=CONDITION_COLORS[condition],
+            label=CONDITION_LABELS[condition],
+            lw=FLW,
+        )
+    ax_mean.set_xlabel("Hop")
+    ax_mean.set_title(r"Mean $\Sigma$ over the five axes", fontsize=FTITLE, color="#000")
+    ax_mean.set_ylabel(r"Mean $\Sigma$")
+    ax_mean.set_ylim(-0.01, 0.1)
+
+    # Bottom right (spanning ~3 columns): mean Sigma at hop 200 per config
+    ax_cfg = fig.add_subplot(gs[1, 2:])
+    configs = sorted(summaries["direct"]["sigma_hop200"]["config"].unique())
+    x = np.arange(len(configs))
+    for condition in SLIDE_CONDITIONS:
+        s = summaries[condition]["sigma_hop200"]
+        means = s.groupby("config")["mean_sigma"].mean().reindex(configs).to_numpy()
+        ax_cfg.plot(
+            x,
+            means,
+            color=CONDITION_COLORS[condition],
+            marker="o",
+            ms=3.5,
+            lw=FLW,
+            label=CONDITION_LABELS[condition],
+        )
+    ax_cfg.set_xlabel("")
+    ax_cfg.set_xticks(x)
+    ax_cfg.set_xticklabels(configs, rotation=45, ha="right", fontsize=FAX - 1)
+    ax_cfg.set_title(rf"Mean $\Sigma$ at hop {HOP} per decoding config",
+                     fontsize=FTITLE, color="#000")
+
+    handles = [
+        Line2D([0], [0], color=CONDITION_COLORS[c], lw=FLW, marker="o", ms=3.5,
+               label=CONDITION_LABELS[c])
+        for c in SLIDE_CONDITIONS
+    ]
+    ax_cfg.legend(handles=handles, **LEGEND_KW)
+
+    return fig
 
 
 def headline_figure(summaries, seed, cloud_sigmas):
@@ -474,6 +587,8 @@ def main():
 
     save_fig(headline_figure(summaries, seed, cloud_sigmas), "slide_sigma_headline")
     save_fig(per_axis_figure(summaries), "slide_sigma_per_axis_curves")
+    save_fig(sigma_overview_figure(summaries), "slide_sigma_overview")
+    save_fig(cloud_figure(summaries, seed), "slide_sigma_cloud")
 
     # Direction figure: endpoint drift per condition with bootstrap CIs
     direction = {c: summaries[c]["direction"] for c in SLIDE_CONDITIONS}
