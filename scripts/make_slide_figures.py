@@ -23,8 +23,9 @@ Inputs (published exports, no LM calls, no refitting):
   DATA_DIR/data/echodrift_stats/vs_weighted/metrics_cumulative_long.csv
 
 Outputs (PDF + PNG 300 dpi) into the deck's img/ directory:
-  slide_sigma_headline.png        (2x2: clouds Direct/VS, Sigma(h), Sigma hop200)
+  slide_sigma_headline.png        (merged cloud + Sigma(h) + Sigma hop200)
   slide_sigma_per_axis_curves.png (1x5 per-axis Sigma(h), two lines)
+  slide_drift_direction.png       (endpoint drift per axis, Direct vs VS)
 
 Same sigma definitions as the paper analysis (echochain.diffusion):
 between-chain variance of the axis projection across the nine chains,
@@ -352,6 +353,60 @@ def per_axis_figure(summaries):
     return fig
 
 
+def chain_slopes(df_axis, axes=AXES):
+    """Per-chain OLS slope of each axis on hop index (the paper's mu).
+
+    Mirrors the paper analysis: slope per chain (config x seed x chain),
+    in axis units per hop; the caller averages and bootstraps.
+    Vectorized hop-by-hop within each chain via closed-form OLS.
+    """
+    out = []
+    for _, g in df_axis.groupby(["config", "msg_id", "chain"]):
+        g = g.sort_values("hop")
+        h = g["hop"].to_numpy(dtype=float)
+        h = h - h.mean()
+        denom = float((h * h).sum())
+        Y = g[list(axes)].to_numpy(dtype=float)
+        Y = Y - Y.mean(axis=0)
+        out.append((h[:, None] * Y).sum(axis=0) / denom)
+    return pd.DataFrame(out, columns=list(axes))
+
+
+def drift_direction_figure(direction):
+    """Slide variant of fig_drift_direction: VS against Direct.
+
+    Paper 1's direction child plots one dot + 95% CI per axis (mean
+    signed drift, hop 200 minus hop 0). This variant keeps the same
+    layout, x-label wording, and axis order, but groups the two
+    conditions side by side per axis (Direct grey, VS magenta) so the
+    direction change reads on one plot. 2026-10-03, deck TODO: where
+    does VS drift on the semantic axes (Paper 2's real-drift case).
+    """
+    fig, ax = plt.subplots(figsize=(mm_to_in(120), mm_to_in(70)))
+
+    n_axes = len(AXES)
+    y = np.arange(n_axes, dtype=float)
+    offset = 0.19  # within-group offset, conditions above/below the tick
+    for k, condition in enumerate(SLIDE_CONDITIONS):
+        dd = direction[condition]
+        means = np.array([dd["mean"][a] for a in AXES])
+        lo = np.array([dd["ci95_lo"][a] for a in AXES])
+        hi = np.array([dd["ci95_hi"][a] for a in AXES])
+        yy = y + (offset if condition == "vs_weighted" else -offset)
+        color = CONDITION_COLORS[condition]
+        ax.hlines(yy, lo, hi, color=color, lw=1.6)
+        ax.scatter(means, yy, s=24, color=color, zorder=3,
+                   label=CONDITION_LABELS[condition])
+
+    ax.axvline(0.0, color="#888888", lw=0.8, alpha=0.7)
+    ax.set_yticks(y)
+    ax.set_yticklabels([AXIS_LABELS[a] for a in AXES])
+    ax.invert_yaxis()  # Paper 1's direction child lists Valence on top
+    ax.set_xlabel("Mean signed drift, hop 200 minus hop 0 (axis units)")
+    ax.legend(**LEGEND_KW)
+    return fig
+
+
 def main():
     setup()
     summaries = {}
@@ -362,6 +417,26 @@ def main():
         s["sigma_curve_per_axis"] = sigma_curve_per_axis(df_axis)
         s["sigma_hop200"] = sigma_hop200(df_axis)
         s["cloud"] = df_axis[df_axis["config"] == CFG].copy()
+        # Paper-1-style direction stats: mean signed endpoint drift
+        # (hop 200 minus hop 0) with a 95% bootstrap CI over chains
+        # (resampling the config x seed x chain units, as the paper
+        # treats chains as its sample).
+        last = df_axis[df_axis["hop"] == HOP].set_index(
+            ["config", "msg_id", "chain"])[AXES]
+        first = df_axis[df_axis["hop"] == 0].set_index(
+            ["config", "msg_id", "chain"])[AXES]
+        endpoint = (last - first).dropna()
+        rng = np.random.default_rng(0)
+        boots = np.stack([
+            endpoint.sample(len(endpoint), replace=True, random_state=i).mean()
+            for i in range(2000)
+        ])
+        lo, hi = np.percentile(boots, [2.5, 97.5], axis=0)
+        s["direction"] = {
+            "mean": endpoint.mean(),
+            "ci95_lo": pd.Series(lo, index=AXES),
+            "ci95_hi": pd.Series(hi, index=AXES),
+        }
         summaries[condition] = s
         del df_axis
         print(f"processed {condition}")
@@ -399,6 +474,18 @@ def main():
 
     save_fig(headline_figure(summaries, seed, cloud_sigmas), "slide_sigma_headline")
     save_fig(per_axis_figure(summaries), "slide_sigma_per_axis_curves")
+
+    # Direction figure: endpoint drift per condition with bootstrap CIs
+    direction = {c: summaries[c]["direction"] for c in SLIDE_CONDITIONS}
+    print("endpoint drift, hop 200 minus hop 0 (axis units, mean over"
+          " 4050 chains; CI from 2000 bootstrap resamples):")
+    for condition in SLIDE_CONDITIONS:
+        dd = direction[condition]
+        for ax in AXES:
+            print(f"  {condition:12s} {AXIS_LABELS[ax]:22s} "
+                  f"{dd['mean'][ax]:+.4f}  [{dd['ci95_lo'][ax]:+.4f},"
+                  f" {dd['ci95_hi'][ax]:+.4f}]")
+    save_fig(drift_direction_figure(direction), "slide_drift_direction")
 
 
 if __name__ == "__main__":
