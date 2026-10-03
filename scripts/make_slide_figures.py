@@ -26,11 +26,12 @@ Outputs (PDF + PNG 300 dpi) into the deck's img/ directory:
   slide_sigma_headline.png        (merged cloud + Sigma(h) + Sigma hop200;
                                    kept as the generator's 2x2 variant)
   slide_sigma_per_axis_curves.png (1x5 per-axis Sigma(h), two lines)
-  slide_sigma_overview.png        (pass 3/4 headline: 2x5 -- row 1 =
-                                   five per-axis Sigma(h); row 2 =
-                                   mean drift trajectories per axis;
-                                   config panel moved to its own
-                                   child figure in pass 4)
+  slide_sigma_overview.png        (pass 5 headline: 1x6 -- five
+                                   per-axis Sigma(h) + mean Sigma as
+                                   the right-most panel; the pass-4
+                                   trajectory row is removed, those
+                                   curves live on the trajectories
+                                   child)
   slide_sigma_cloud.png           (the merged cloud alone, sample named)
   slide_sigma_config.png          (Sigma at hop 200 per config + jitter)
   slide_drift_trajectories.png    (mean axis trajectory per condition)
@@ -259,25 +260,28 @@ def cloud_figure(summaries, seed):
 
 
 def sigma_overview_figure(summaries):
-    """All-axes headline: five per-axis Sigma(h) + drift trajectories.
+    """All-axes headline: 1x6, five per-axis Sigma(h) + mean Sigma.
 
-    Deck pass 4 (user): the mean-Sigma-over-hops panel leaves the
-    figure entirely (its message is identical to the per-axis row's and
-    the deck no longer needs it; the config panel becomes its own
-    child), and the bottom row now shows the mean drift trajectories
-    (mean axis projection per condition and hop), the drift-child's
-    figure style inside the headline.
+    Deck pass 4/5: the headline is ONE row of six Sigma panels -- the
+    five per-axis Sigma(h) curves plus the mean-over-axes curve as the
+    right-most panel (its y-band -0.01..0.1 differs from the per-axis
+    -0.005..0.05 band, so it keeps its own y-ticks). The pass-4
+    trajectory row was a misunderstanding of the user's request and is
+    removed (those curves live on the "How the mean trajectory bends"
+    child already).
     """
-    fig = plt.figure(figsize=(mm_to_in(230), mm_to_in(120)))
-    gs = fig.add_gridspec(
-        2, 5,
-        left=0.065, right=0.995, top=0.93, bottom=0.17,
-        hspace=0.55, wspace=0.24,
+    fig, axs = F.make_grid(
+        width_mm=250,
+        panels=(1, 6),
+        panel_aspect=0.80,
+        margins=(0.10, 0.17, 0.995, 0.87),
+        gutter=(0.10, 0.36),
+        constrained=False,
+        flatten=True,
     )
-    axs_top = [fig.add_subplot(gs[0, i]) for i in range(5)]
 
-    # Top row: per-axis Sigma(h), averaged over seeds and configs
-    for i, (ax, axis) in enumerate(zip(axs_top, AXES)):
+    # Panels 1-5: per-axis Sigma(h), averaged over seeds and configs
+    for i, (ax, axis) in enumerate(zip(axs[:5], AXES)):
         for condition in SLIDE_CONDITIONS:
             c = summaries[condition]["sigma_curve_per_axis"]
             ax.plot(
@@ -287,32 +291,43 @@ def sigma_overview_figure(summaries):
                 lw=FLW,
                 label=CONDITION_LABELS[condition],
             )
-        ax.set_xlabel("Hop")
+        ax.set_xlabel("Hop", fontsize=FAX - 1)
         ax.set_title(AXIS_LABELS[axis], fontsize=FTITLE, color="#000")
         ax.set_ylim(-0.005, 0.05)
-        if i > 0:
+        if i < 5:
             ax.tick_params(labelleft=False)
-    axs_top[0].set_ylabel(r"Per-axis $\Sigma$")
+        if i == 4:
+            ax.tick_params(labelsize=FAX - 1)
+    axs[0].set_ylabel(r"Per-axis $\Sigma$")
 
-    # Bottom row: mean drift trajectories (axis projection per hop,
-    # mean over all seeds and configs), one panel per axis
-    axs_bot = [fig.add_subplot(gs[1, i]) for i in range(5)]
-    for i, (ax, axis) in enumerate(zip(axs_bot, AXES)):
-        for condition in SLIDE_CONDITIONS:
-            c = summaries[condition]["drift_curves"]
-            ax.plot(
-                c.index,
-                c[axis],
-                color=CONDITION_COLORS[condition],
-                lw=FLW,
-                label=CONDITION_LABELS[condition],
-            )
-        ax.set_xlabel("Hop")
-        if i == 0:
-            ax.set_ylabel("Mean axis score")
-        if i > 0:
-            ax.tick_params(labelleft=False)
-        ax.set_ylim(-0.12, 0.12)
+    # Panel 6: mean Sigma over the five axes (own y-band, own y-ticks)
+    ax = axs[5]
+    for condition in SLIDE_CONDITIONS:
+        c = summaries[condition]["sigma_curve_position"]
+        ax.plot(
+            c["hop"],
+            c["mean_sigma"],
+            color=CONDITION_COLORS[condition],
+            lw=FLW,
+            label=CONDITION_LABELS[condition],
+        )
+    ax.set_xlabel("Hop", fontsize=FAX - 1)
+    ax.set_title(r"Mean $\Sigma$", fontsize=FTITLE, color="#000")
+    ax.set_ylim(-0.01, 0.1)
+
+    handles = [
+        Line2D([0], [0], color=CONDITION_COLORS[c], lw=FLW,
+               label=CONDITION_LABELS[c])
+        for c in SLIDE_CONDITIONS
+    ]
+    fig.legend(
+        handles=handles,
+        labels=[h.get_label() for h in handles],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.05),
+        ncol=len(SLIDE_CONDITIONS),
+        **LEGEND_KW,
+    )
     return fig
 
 
