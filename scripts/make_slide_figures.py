@@ -26,10 +26,16 @@ Outputs (PDF + PNG 300 dpi) into the deck's img/ directory:
   slide_sigma_headline.png        (merged cloud + Sigma(h) + Sigma hop200;
                                    kept as the generator's 2x2 variant)
   slide_sigma_per_axis_curves.png (1x5 per-axis Sigma(h), two lines)
-  slide_sigma_overview.png        (pass 3 headline: 1x5 per-axis row +
-                                   two aggregate panels)
+  slide_sigma_overview.png        (pass 3/4 headline: 2x5 -- row 1 =
+                                   five per-axis Sigma(h); row 2 =
+                                   mean drift trajectories per axis;
+                                   config panel moved to its own
+                                   child figure in pass 4)
   slide_sigma_cloud.png           (the merged cloud alone, sample named)
-  slide_drift_direction.png       (endpoint drift per axis, Direct vs VS)
+  slide_sigma_config.png          (Sigma at hop 200 per config + jitter)
+  slide_drift_trajectories.png    (mean axis trajectory per condition)
+  slide_drift_direction.png       (endpoint drift per axis, Direct vs VS,
+                                   seed-clustered CIs since pass 4)
 
 Same sigma definitions as the paper analysis (echochain.diffusion):
 between-chain variance of the axis projection across the nine chains,
@@ -253,21 +259,20 @@ def cloud_figure(summaries, seed):
 
 
 def sigma_overview_figure(summaries):
-    """All-axes headline: 1x5 per-axis Sigma(h) + the two aggregate panels.
+    """All-axes headline: five per-axis Sigma(h) + drift trajectories.
 
-    Deck TODO pass 3 (user: one axis alone is not convincing as the main
-    result): the findings slide now shows all five axes and the summary
-    in one figure. Top row: per-axis between-chain Sigma over hops
-    (Direct grey, VS magenta; averaged over seeds and configs). Bottom
-    row: mean over the five axes over hops, and mean Sigma at hop 200
-    per decoding config. This figure absorbs the former per-axis backup
-    child's figure (slide_sigma_per_axis_curves = the top row alone).
+    Deck pass 4 (user): the mean-Sigma-over-hops panel leaves the
+    figure entirely (its message is identical to the per-axis row's and
+    the deck no longer needs it; the config panel becomes its own
+    child), and the bottom row now shows the mean drift trajectories
+    (mean axis projection per condition and hop), the drift-child's
+    figure style inside the headline.
     """
     fig = plt.figure(figsize=(mm_to_in(230), mm_to_in(120)))
     gs = fig.add_gridspec(
         2, 5,
         left=0.065, right=0.995, top=0.93, bottom=0.17,
-        hspace=0.52, wspace=0.24,
+        hspace=0.55, wspace=0.24,
     )
     axs_top = [fig.add_subplot(gs[0, i]) for i in range(5)]
 
@@ -289,51 +294,25 @@ def sigma_overview_figure(summaries):
             ax.tick_params(labelleft=False)
     axs_top[0].set_ylabel(r"Per-axis $\Sigma$")
 
-    # Bottom left (spanning ~2.5 columns): mean Sigma over hops
-    ax_mean = fig.add_subplot(gs[1, :2])
-    for condition in SLIDE_CONDITIONS:
-        c = summaries[condition]["sigma_curve_position"]
-        ax_mean.plot(
-            c["hop"],
-            c["mean_sigma"],
-            color=CONDITION_COLORS[condition],
-            label=CONDITION_LABELS[condition],
-            lw=FLW,
-        )
-    ax_mean.set_xlabel("Hop")
-    ax_mean.set_title(r"Mean $\Sigma$ over the five axes", fontsize=FTITLE, color="#000")
-    ax_mean.set_ylabel(r"Mean $\Sigma$")
-    ax_mean.set_ylim(-0.01, 0.1)
-
-    # Bottom right (spanning ~3 columns): mean Sigma at hop 200 per config
-    ax_cfg = fig.add_subplot(gs[1, 2:])
-    configs = sorted(summaries["direct"]["sigma_hop200"]["config"].unique())
-    x = np.arange(len(configs))
-    for condition in SLIDE_CONDITIONS:
-        s = summaries[condition]["sigma_hop200"]
-        means = s.groupby("config")["mean_sigma"].mean().reindex(configs).to_numpy()
-        ax_cfg.plot(
-            x,
-            means,
-            color=CONDITION_COLORS[condition],
-            marker="o",
-            ms=3.5,
-            lw=FLW,
-            label=CONDITION_LABELS[condition],
-        )
-    ax_cfg.set_xlabel("")
-    ax_cfg.set_xticks(x)
-    ax_cfg.set_xticklabels(configs, rotation=45, ha="right", fontsize=FAX - 1)
-    ax_cfg.set_title(rf"Mean $\Sigma$ at hop {HOP} per decoding config",
-                     fontsize=FTITLE, color="#000")
-
-    handles = [
-        Line2D([0], [0], color=CONDITION_COLORS[c], lw=FLW, marker="o", ms=3.5,
-               label=CONDITION_LABELS[c])
-        for c in SLIDE_CONDITIONS
-    ]
-    ax_cfg.legend(handles=handles, **LEGEND_KW)
-
+    # Bottom row: mean drift trajectories (axis projection per hop,
+    # mean over all seeds and configs), one panel per axis
+    axs_bot = [fig.add_subplot(gs[1, i]) for i in range(5)]
+    for i, (ax, axis) in enumerate(zip(axs_bot, AXES)):
+        for condition in SLIDE_CONDITIONS:
+            c = summaries[condition]["drift_curves"]
+            ax.plot(
+                c.index,
+                c[axis],
+                color=CONDITION_COLORS[condition],
+                lw=FLW,
+                label=CONDITION_LABELS[condition],
+            )
+        ax.set_xlabel("Hop")
+        if i == 0:
+            ax.set_ylabel("Mean axis score")
+        if i > 0:
+            ax.tick_params(labelleft=False)
+        ax.set_ylim(-0.12, 0.12)
     return fig
 
 
@@ -466,7 +445,102 @@ def per_axis_figure(summaries):
     return fig
 
 
-def chain_slopes(df_axis, axes=AXES):
+def sigma_config_figure(summaries):
+    """Backup child: mean Sigma at hop 200 per decoding config + jitter.
+
+    Moved off the headline (pass 4, user: a detail someone might ask
+    about). The jitter dots are restored to match the paper's panel
+    (analysis_01_descriptives_vs.py: scatter of the 50 per-seed
+    mean_sigma values per config and condition, rng(0), jitter window
+    +-0.12, s=4, alpha 0.35); the slide variant had dropped them.
+    """
+    fig, ax = plt.subplots(figsize=(mm_to_in(200), mm_to_in(80)))
+    fig.subplots_adjust(left=0.08, right=0.99, top=0.88, bottom=0.24)
+    configs = sorted(summaries["direct"]["sigma_hop200"]["config"].unique())
+    x = np.arange(len(configs))
+    for condition in SLIDE_CONDITIONS:
+        s = summaries[condition]["sigma_hop200"]
+        means = s.groupby("config")["mean_sigma"].mean().reindex(configs).to_numpy()
+        ax.plot(
+            x,
+            means,
+            color=CONDITION_COLORS[condition],
+            marker="o",
+            ms=3.5,
+            lw=FLW,
+            label=CONDITION_LABELS[condition],
+        )
+        # Paper-faithful jitter: one dot per seed (50) per config
+        for i, cfg in enumerate(configs):
+            vals = s.loc[s["config"] == cfg, "mean_sigma"].to_numpy()
+            ax.scatter(
+                np.full_like(vals, x[i], dtype=float)
+                + np.random.default_rng(0).uniform(-0.12, 0.12, len(vals)),
+                vals,
+                s=14,
+                color=CONDITION_COLORS[condition],
+                alpha=0.35,
+                edgecolors="none",
+            )
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [c.replace("temp", "T").replace("_topp", ", p=") for c in configs],
+        rotation=45, ha="right", fontsize=FAX - 1,
+    )
+    ax.set_ylabel(rf"Mean $\Sigma$ at hop {HOP}")
+    ax.legend(**LEGEND_KW)
+    return fig
+
+
+def drift_trajectories_figure(summaries, top_row=False):
+    """Mean drift trajectories per axis (Direct vs VS), child figure.
+
+    User point 2 (pass 4): the drift child mirror of the fidelity
+    figure's mean-trajectory panels. One panel per axis; each line is
+    the axis projection averaged over all seeds and configs; Direct
+    grey, VS magenta. Paper 1's six-panel strips use shared y-limits;
+    here each axis panel keeps -0.12..0.12 so the VS bends stay inside.
+    """
+    fig, axs = F.make_grid(
+        width_mm=230,
+        panels=(1, len(AXES)),
+        panel_aspect=0.72,
+        margins=(0.07, 0.17, 0.99, 0.88),
+        gutter=(0.06, 0.36),
+        constrained=False,
+        flatten=True,
+    )
+    for i, (ax, axis) in enumerate(zip(axs, AXES)):
+        for condition in SLIDE_CONDITIONS:
+            c = summaries[condition]["drift_curves"]
+            ax.plot(
+                c.index,
+                c[axis],
+                color=CONDITION_COLORS[condition],
+                lw=FLW,
+                label=CONDITION_LABELS[condition],
+            )
+        ax.set_xlabel("Hop")
+        ax.set_title(AXIS_LABELS[axis], fontsize=FTITLE, color="#000")
+        ax.set_ylim(-0.12, 0.12)
+        if i > 0:
+            ax.tick_params(labelleft=False)
+    axs[0].set_ylabel("Mean axis score")
+
+    handles = [
+        Line2D([0], [0], color=CONDITION_COLORS[c], lw=FLW,
+               label=CONDITION_LABELS[c])
+        for c in SLIDE_CONDITIONS
+    ]
+    fig.legend(
+        handles=handles,
+        labels=[h.get_label() for h in handles],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.06),
+        ncol=len(SLIDE_CONDITIONS),
+        **LEGEND_KW,
+    )
+    return fig
     """Per-chain OLS slope of each axis on hop index (the paper's mu).
 
     Mirrors the paper analysis: slope per chain (config x seed x chain),
@@ -530,16 +604,20 @@ def main():
         s["sigma_curve_per_axis"] = sigma_curve_per_axis(df_axis)
         s["sigma_hop200"] = sigma_hop200(df_axis)
         s["cloud"] = df_axis[df_axis["config"] == CFG].copy()
-        # Paper-1-style direction stats: mean signed endpoint drift
-        # (hop 200 minus hop 0) with a 95% bootstrap CI over chains
-        # (resampling the config x seed x chain units, as the paper
-        # treats chains as its sample).
-        last = df_axis[df_axis["hop"] == HOP].set_index(
-            ["config", "msg_id", "chain"])[AXES]
-        first = df_axis[df_axis["hop"] == 0].set_index(
-            ["config", "msg_id", "chain"])[AXES]
-        endpoint = (last - first).dropna()
-        rng = np.random.default_rng(0)
+        # Paper-1-identical direction stats (user point 1, pass 4): the
+        # unit of analysis is the SEED, exactly as
+        # echochains-sim-analysis seed_chain_analyses._seed_drift does:
+        # per-seed mean endpoint minus mean initial state across that
+        # seed's chains (all nine configs; 81 chains per seed), then a
+        # 95% percentle bootstrap over the 50 seeds. The previous
+        # chain-level bootstrap treated the 4050 chains as independent
+        # and produced ~7x too-narrow CIs that disagreed with Paper 1's
+        # figure for the same Direct data.
+        sub = df_axis.sort_values("hop")
+        ends = sub[sub["hop"] == HOP].groupby("msg_id")[AXES].mean()
+        inits = sub[sub["hop"] == 0].groupby("msg_id")[AXES].mean()
+        endpoint = (ends - inits).dropna()
+        rng = np.random.default_rng(2026)  # Paper 1's CI seed
         boots = np.stack([
             endpoint.sample(len(endpoint), replace=True, random_state=i).mean()
             for i in range(2000)
@@ -549,7 +627,11 @@ def main():
             "mean": endpoint.mean(),
             "ci95_lo": pd.Series(lo, index=AXES),
             "ci95_hi": pd.Series(hi, index=AXES),
+            "n_seeds": int(len(endpoint)),
         }
+        # Mean drift trajectories (user point 2, pass 4): mean axis
+        # projection per hop across all seeds and configs, per condition.
+        s["drift_curves"] = df_axis.groupby("hop")[AXES].mean()
         summaries[condition] = s
         del df_axis
         print(f"processed {condition}")
@@ -589,11 +671,14 @@ def main():
     save_fig(per_axis_figure(summaries), "slide_sigma_per_axis_curves")
     save_fig(sigma_overview_figure(summaries), "slide_sigma_overview")
     save_fig(cloud_figure(summaries, seed), "slide_sigma_cloud")
+    save_fig(sigma_config_figure(summaries), "slide_sigma_config")
+    save_fig(drift_trajectories_figure(summaries), "slide_drift_trajectories")
 
-    # Direction figure: endpoint drift per condition with bootstrap CIs
+    # Direction figure: endpoint drift per condition, seed-clustered CIs
     direction = {c: summaries[c]["direction"] for c in SLIDE_CONDITIONS}
-    print("endpoint drift, hop 200 minus hop 0 (axis units, mean over"
-          " 4050 chains; CI from 2000 bootstrap resamples):")
+    print("endpoint drift, hop 200 minus hop 0 (axis units; Paper 1"
+          " protocol: per-seed mean endpoint minus mean init over its"
+          " 81 chains, CI = 95% bootstrap over the 50 seeds):")
     for condition in SLIDE_CONDITIONS:
         dd = direction[condition]
         for ax in AXES:
