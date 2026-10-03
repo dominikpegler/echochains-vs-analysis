@@ -382,7 +382,7 @@ def drift_direction_figure(direction):
     direction change reads on one plot. 2026-10-03, deck TODO: where
     does VS drift on the semantic axes (Paper 2's real-drift case).
     """
-    fig, ax = plt.subplots(figsize=(mm_to_in(120), mm_to_in(70)))
+    fig, ax = plt.subplots(figsize=(mm_to_in(160), mm_to_in(88)))
 
     n_axes = len(AXES)
     y = np.arange(n_axes, dtype=float)
