@@ -9,6 +9,13 @@ leaves every slides figure (deck wording is already mode-free, the deck
 concerns weighted sampling only), so VS is the single colored
 line against Direct.
 
+Headline figure, 2026-10-03 revision (deck TODO resolved): the two
+trajectory clouds share ONE panel on a shared y-axis (user decision: the
+former side-by-side panels implied an identical scale without showing
+the right panel's ticks), Direct grey vs VS magenta, and the legend
+states each condition's Sigma value at hop 200 (seed/config/axis of the
+plotted cloud; user note: "epsilon" meant Sigma).
+
 Inputs (published exports, no LM calls, no refitting):
   DATA_DIR/data/echodrift_stats/axis_cumulative_long.csv   (Direct)
   DATA_DIR/data/echodrift_stats/metrics_cumulative_long.csv (Direct)
@@ -26,7 +33,13 @@ in fig_sigma_headline / fig_sigma_per_axis_curves.
 
 The headline seed is the same pick_widening_seed choice as the paper:
 the seed with the largest weighted-minus-direct Sigma at hop 200 on the
-factual-to-narrative axis (default config).
+factual-to-narrative axis (default config). For MSG_024 that contrast
+is extreme by construction: all nine Direct chains end at the seed
+verbatim, so the cloud's Direct Sigma at hop 200 is near zero
+(0.00011) while VS is 0.0728 (the paper's sigma-divergence example;
+echochains_vs_paper.org). The legend therefore shows values that
+belong to the plotted seed and config, not the deck-wide aggregates
+(those are the bottom panels' subject).
 
 Run (echochain conda env):
   conda run -n echochain python scripts/make_slide_figures.py
@@ -41,6 +54,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
 
 REPO = Path(__file__).resolve().parent.parent
 for p in [REPO / "src" if (REPO / "src").exists() else REPO, REPO / "pub-utils"]:
@@ -52,6 +66,7 @@ from echochain.diffusion import AXES, sigma_axis_position
 from echochain.utils import get_data_dir
 
 import pub_utils.figures as F
+from pub_utils.figures import mm_to_in
 
 # Slide-grade fonts (echochains/trustbandits slide-script pattern; the
 # paper style uses base_font=7, projection needs more).
@@ -128,18 +143,53 @@ def pick_widening_seed(summaries, axis, config=CFG):
     return diff.index[0]
 
 
-def plot_cloud(ax, df_axis, msg_id, axis, color, label, yaxis=True):
-    sub = df_axis[df_axis["msg_id"] == msg_id]
-    for chain, g in sub.groupby("chain"):
-        g = g.sort_values("hop")
-        ax.plot(g["hop"], g[axis], color=color, lw=0.6, alpha=0.5)
+def plot_cloud(ax, df_axis_by_condition, msg_id, axis, yaxis=True, legend=True):
+    """One merged cloud: all chains of every SLIDE_CONDITIONS condition.
+
+    2026-10-03: the former two side-by-side cloud panels (Direct left,
+    VS right, y-ticks on the left panel only) implied a shared scale
+    without showing it; the deck TODO asked for one plot on one scale
+    and for the Sigma value in the legend. df_axis_by_condition maps
+    each condition to its own axis frame (the Direct and VS exports
+    have no condition column, so conditions are concatenated only for
+    plotting order, not for the variance computation). Returns
+    {condition: Sigma at hop 200} for the plotted seed/config/axis so
+    the caller can put those values into the legend labels.
+    """
+    sigmas = {}
+    for condition in SLIDE_CONDITIONS:
+        sub = df_axis_by_condition[condition]
+        sub = sub[(sub["msg_id"] == msg_id) & (sub["config"] == CFG)]
+        for chain, g in sub.groupby("chain"):
+            g = g.sort_values("hop")
+            ax.plot(g["hop"], g[axis], color=CONDITION_COLORS[condition],
+                    lw=0.6, alpha=0.5)
+        sigmas[condition] = float(
+            sub[sub["hop"] == HOP][axis].var(ddof=1)
+        )
     ax.set_xlabel("Hop")
-    if yaxis:
-        ax.set_ylabel(AXIS_LABELS[axis])
-    else:
-        ax.set_ylabel("")
-        ax.set_yticklabels([])
-    ax.set_title(label, fontsize=FTITLE, color="#000")
+    ax.set_ylabel(AXIS_LABELS[axis] if yaxis else "")
+    ax.set_title("Chain trajectories on one axis", fontsize=FTITLE, color="#000")
+    if legend:
+        handles = [
+            Line2D(
+                [0], [0],
+                color=CONDITION_COLORS[condition], lw=FLW, alpha=0.9,
+                label=f"{CONDITION_LABELS[condition]} "
+                      rf"($\Sigma_{{200}}$ = {sigmas[condition]:.4f})",
+            )
+            for condition in SLIDE_CONDITIONS
+        ]
+        # Upper-left: above the Direct band (locked near 0.5) and clear
+        # of the late-hop VS spike (upper right); lower-left collides
+        # with the descending VS cloud. White backing: early VS lines
+        # cross behind the text.
+        ax.legend(
+            handles=handles, loc="upper left", frameon=True,
+            framealpha=0.9, facecolor="white", edgecolor="none",
+            **{k: v for k, v in LEGEND_KW.items() if k != "frameon"},
+        )
+    return sigmas
 
 
 def setup():
@@ -173,50 +223,55 @@ def save_fig(fig, fname):
     plt.close(fig)
 
 
-def headline_figure(summaries, seed):
-    """Slide variant of fig_sigma_headline: 2x2, clouds + Sigma(h) + hop200.
+def headline_figure(summaries, seed, cloud_sigmas):
+    """Slide variant of fig_sigma_headline, 2026-10-03 revision.
 
-    Two conditions only (Direct grey, VS magenta). Canvas ratio set
-    for the deck row (max-height 300px inside 1422x800): wider and less
-    tall than the paper 2x2, panels exactly 3:2.
+    Top: ONE merged trajectory cloud on a shared y-axis (Direct grey +
+    VS magenta, nine chains each; legend carries each condition's Sigma
+    at hop 200 for the plotted seed/config/axis). Bottom: Sigma(h)
+    curves and Sigma at hop 200 per config, both aggregating over seeds
+    and axes. Canvas ratio set for the deck row (max-height 300px
+    inside 1422x800): wider and less tall than the paper 2x2.
     """
-    fig, axs = F.make_grid(
-        width_mm=220,
-        panels=(2, 2),
-        panel_aspect=0.60,
-        margins=(0.075, 0.17, 0.99, 0.94),
-        gutter=(0.08, 0.34),
-        constrained=False,
-        flatten=True,
+    fig = plt.figure(figsize=(mm_to_in(220), mm_to_in(94)))
+    gs = fig.add_gridspec(
+        2, 2,
+        left=0.075, right=0.99, top=0.93, bottom=0.17,
+        hspace=0.42, wspace=0.26,
     )
+    ax_cloud = fig.add_subplot(gs[0, :])
+    axs = [ax_cloud, fig.add_subplot(gs[1, 0]), fig.add_subplot(gs[1, 1])]
 
-    ylim = (-1.0, 1.0)
-    plot_cloud(
-        axs[0], summaries["direct"]["cloud"], seed,
-        "factual_to_narrative", CONDITION_COLORS["direct"], "Direct", yaxis=True,
+    # Top: the merged cloud (both conditions in one panel, shared axis).
+    # plot_cloud draws Direct first, then VS, from the two frames, and
+    # recomputes the cloud Sigmas; the caller's dict must match
+    # (asserted single source of truth).
+    cloud_sigmas_actual = plot_cloud(
+        axs[0], {c: summaries[c]["cloud"] for c in SLIDE_CONDITIONS}, seed,
+        "factual_to_narrative", yaxis=True,
     )
-    plot_cloud(
-        axs[1], summaries["vs_weighted"]["cloud"], seed,
-        "factual_to_narrative", CONDITION_COLORS["vs_weighted"], "VS",
-        yaxis=False,
-    )
+    for condition in SLIDE_CONDITIONS:
+        assert abs(cloud_sigmas_actual[condition] - cloud_sigmas[condition]) < 1e-9, (
+            f"cloud Sigma mismatch for {condition}: "
+            f"{cloud_sigmas_actual[condition]} vs {cloud_sigmas[condition]}"
+        )
 
     # Bottom left: Sigma(h) curves, mean over axes
     for condition in SLIDE_CONDITIONS:
         c = summaries[condition]["sigma_curve_position"]
-        axs[2].plot(
+        axs[1].plot(
             c["hop"],
             c["mean_sigma"],
             color=CONDITION_COLORS[condition],
             label=CONDITION_LABELS[condition],
             lw=FLW,
         )
-    axs[2].set_xlabel("Hop")
-    axs[2].set_title(r"Mean between-chain variance $\Sigma$ over hops",
+    axs[1].set_xlabel("Hop")
+    axs[1].set_title(r"Mean between-chain variance $\Sigma$ over hops",
                      fontsize=FTITLE, color="#000")
-    axs[2].set_ylabel(r"Mean $\Sigma$")
-    axs[2].legend(**LEGEND_KW)
-    axs[2].set_ylim(-0.01, 0.1)
+    axs[1].set_ylabel(r"Mean $\Sigma$")
+    axs[1].legend(**LEGEND_KW)
+    axs[1].set_ylim(-0.01, 0.1)
 
     # Bottom right: Sigma at hop 200, per config, per condition
     configs = sorted(summaries["direct"]["sigma_hop200"]["config"].unique())
@@ -224,7 +279,7 @@ def headline_figure(summaries, seed):
     for condition in SLIDE_CONDITIONS:
         s = summaries[condition]["sigma_hop200"]
         means = s.groupby("config")["mean_sigma"].mean().reindex(configs).to_numpy()
-        axs[3].plot(
+        axs[2].plot(
             x,
             means,
             color=CONDITION_COLORS[condition],
@@ -233,18 +288,17 @@ def headline_figure(summaries, seed):
             lw=FLW,
             label=CONDITION_LABELS[condition],
         )
-    axs[3].set_xlabel("")
-    axs[3].set_xticks(x)
-    axs[3].set_xticklabels(configs, rotation=45, ha="right", fontsize=FAX - 1)
-    axs[3].set_title(rf"Mean $\Sigma$ at hop {HOP}", fontsize=FTITLE, color="#000")
-    from matplotlib.lines import Line2D
+    axs[2].set_xlabel("")
+    axs[2].set_xticks(x)
+    axs[2].set_xticklabels(configs, rotation=45, ha="right", fontsize=FAX - 1)
+    axs[2].set_title(rf"Mean $\Sigma$ at hop {HOP}", fontsize=FTITLE, color="#000")
 
     handles = [
         Line2D([0], [0], color=CONDITION_COLORS[c], lw=FLW, marker="o", ms=3.5,
                label=CONDITION_LABELS[c])
         for c in SLIDE_CONDITIONS
     ]
-    axs[3].legend(handles=handles, **LEGEND_KW)
+    axs[2].legend(handles=handles, **LEGEND_KW)
 
     return fig
 
@@ -307,17 +361,31 @@ def main():
         s["sigma_curve_position"] = sigma_curve_position(df_axis)
         s["sigma_curve_per_axis"] = sigma_curve_per_axis(df_axis)
         s["sigma_hop200"] = sigma_hop200(df_axis)
-        s["cloud"] = (
-            df_axis[df_axis["config"] == CFG].copy()
-            if condition in ("direct", "vs_weighted")
-            else None
-        )
+        s["cloud"] = df_axis[df_axis["config"] == CFG].copy()
         summaries[condition] = s
         del df_axis
         print(f"processed {condition}")
 
     seed = pick_widening_seed(summaries, "factual_to_narrative")
     print("widening seed:", seed)
+
+    # Sigmas for the merged cloud's legend: per condition at hop 200,
+    # plotted seed/config/axis (MSG_024, default config, fact-narr).
+    # plot_cloud recomputes them and the assert in headline_figure
+    # guards the single source of truth.
+    CLOUD_AXIS = "factual_to_narrative"
+    cloud_sigmas = {
+        condition: float(
+            summaries[condition]["cloud"][
+                (summaries[condition]["cloud"]["msg_id"] == seed)
+                & (summaries[condition]["cloud"]["hop"] == HOP)
+            ][CLOUD_AXIS].var(ddof=1)
+        )
+        for condition in SLIDE_CONDITIONS
+    }
+    print("cloud Sigma at hop 200 (seed/config/axis of the cloud):")
+    for condition, v in cloud_sigmas.items():
+        print(f"  {condition}: {v:.5f}")
 
     # assertions: the deck's headline numbers reproduce from these frames
     w = summaries["vs_weighted"]["sigma_hop200"]
@@ -329,7 +397,7 @@ def main():
     print("per-config weighted/direct Sigma ratio:")
     print(ratio.round(1).to_string())
 
-    save_fig(headline_figure(summaries, seed), "slide_sigma_headline")
+    save_fig(headline_figure(summaries, seed, cloud_sigmas), "slide_sigma_headline")
     save_fig(per_axis_figure(summaries), "slide_sigma_per_axis_curves")
 
 
