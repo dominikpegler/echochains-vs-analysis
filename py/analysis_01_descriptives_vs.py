@@ -700,7 +700,7 @@ for condition in CONDITIONS:
 # ## 3. Stacked per-layer cumulative drift figures
 #
 # One stacked figure per measurement layer (surface, factual, semantic) with
-# rows for the three conditions: Direct (top), VS-weighted (middle),
+# rows for the three conditions: Direct (top), VS (middle),
 # VS-argmax (bottom). Written into pub/descriptives_vs/ and referenced by
 # the manuscript as fig:pilot-cum-{surface,factual,semantic}.
 
@@ -873,9 +873,9 @@ configs = sorted(summaries["direct"]["sigma_hop200"]["config"].unique())
 # ### 5.1. Composite between-chain diffusion figure
 #
 # Single 2x2 figure that combines the trajectory cloud (one seed, Direct vs
-# VS-weighted), the Sigma(h) time course (mean over the five axes), and
+# VS), the Sigma(h) time course (mean over the five axes), and
 # Sigma at hop 200 by decoding config. Panels: (a) Direct trajectories,
-# (b) VS-weighted trajectories, (c) mean Sigma(h) curves, (d) mean
+# (b) VS trajectories, (c) mean Sigma(h) curves, (d) mean
 # Sigma at hop 200 by config.
 
 # %%
@@ -909,7 +909,7 @@ plot_cloud(
     seed,
     "factual_to_narrative",
     CONDITION_COLORS["vs_weighted"],
-    "VS-weighted",
+    "VS",
     yaxis=False,
     ylim=ylim,
 )
@@ -1044,7 +1044,7 @@ _overlay_figure(
 # One panel per semantic axis, three conditions overlaid, aggregated over all
 # seeds and decoding configs. This is the aggregate view that complements the
 # single-seed trajectory clouds in fig:sigma-headline; it shows that the
-# between-chain diffusion increase under VS-weighted is not restricted to the
+# between-chain diffusion increase under VS is not restricted to the
 # factual-to-narrative axis.
 
 # %%
@@ -1200,7 +1200,7 @@ headline_tbl = pd.DataFrame(
         "Condition": [CONDITION_LABELS[a] for a in CONDITIONS],
         r"Mean $\Sigma$": [d, a, w],
         r"Ratio vs Direct": [1.0, a / d, w / d],
-        r"Ratio vs VS-weighted": [d / w, a / w, 1.0],
+        r"Ratio vs VS": [d / w, a / w, 1.0],
     }
 )
 spec = TableSpec(
@@ -1263,7 +1263,7 @@ sens_tbl = pd.DataFrame(
     {
         "Metric": ["Position"],
         r"$\Sigma$ Direct": [sensitivity["direct"].values[0]],
-        r"$\Sigma$ VS-weighted": [sensitivity["vs_weighted"].values[0]],
+        r"$\Sigma$ VS": [sensitivity["vs_weighted"].values[0]],
         r"$\Sigma$ VS-argmax": [sensitivity["vs_argmax"].values[0]],
         r"Ratio weighted/direct": [sensitivity["w_over_d"].values[0]],
         r"Ratio weighted/argmax": [sensitivity["w_over_a"].values[0]],
@@ -1385,7 +1385,7 @@ def unique_hop200_texts(condition, config, msg_id):
 examples_section = {}
 
 # 8.1. Sigma divergence: seed with the largest mean between-chain variance
-# under VS-weighted at the default config.
+# under VS at the default config.
 sh = summaries["vs_weighted"]["sigma_hop200"]
 sh = sh[sh["config"] == CONFIG]
 sigma_seed = sh.loc[sh["mean_sigma"].idxmax(), "msg_id"]
@@ -1403,7 +1403,7 @@ examples_section["sigma_divergence"] = {
     ],
 }
 
-# 8.2. Fidelity loss: lowest last-hop cosine under VS-weighted at the default config.
+# 8.2. Fidelity loss: lowest last-hop cosine under VS at the default config.
 lh = pd.read_csv(stats_dir("vs_weighted") / "metrics_last_hop_cumulative.csv")
 lh = lh[(lh["config"] == CONFIG) & (lh["metric"] == "cosine")]
 fid = lh.loc[lh["value"].idxmin()]
@@ -1418,7 +1418,7 @@ examples_section["fidelity_loss"] = {
     "cosine": float(fid["value"]),
 }
 
-# 8.3. Abstract drift: most negative abstract_to_concrete slope under VS-weighted.
+# 8.3. Abstract drift: most negative abstract_to_concrete slope under VS.
 slopes = summaries["vs_weighted"]["drift_slopes"]
 slopes = slopes[slopes["config"] == CONFIG]
 abs_row = slopes.loc[slopes["abstract_to_concrete"].idxmin()]
@@ -1482,3 +1482,32 @@ for condition in CONDITIONS:
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(pub, f, ensure_ascii=False, indent=2)
     print("Wrote", out_json)
+
+
+# %% [markdown]
+# ## 9. Staged publication outputs (preferred path for cosmetic refreshes)
+#
+# The full run above recomputes the study; its measured cost sits in the
+# per-chain drift-slope loop. For color/label/geometry-only changes, do
+# NOT re-run this notebook top to bottom. scripts/make_paper_outputs.py
+# regenerates the same figures, tables, and macro JSON in independent
+# stages (tables / figures / examples) from the published CSV exports,
+# with vectorized slopes; it runs in minutes. Cell below delegates to it
+# (subprocess, echochain env, DATA_DIR from the repository .env); a full
+# re-analysis keeps using this notebook.
+
+# %%
+import subprocess as _sp
+
+_staged = _sp.run(
+    [
+        _sp.sys.executable if hasattr(_sp, "sys") else "python",
+        str(Path("scripts/make_paper_outputs.py").resolve()),
+        "--stage",
+        "all",
+    ],
+    cwd=str(Path("..").resolve()),
+    capture_output=True,
+    text=True,
+)
+print(_staged.stdout[-2000:] if _staged.returncode == 0 else _staged.stderr[-2000:])
