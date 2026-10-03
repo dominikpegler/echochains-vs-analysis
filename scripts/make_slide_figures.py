@@ -300,7 +300,8 @@ def sigma_overview_figure(summaries):
             ax.tick_params(labelsize=FAX - 1)
     axs[0].set_ylabel(r"Per-axis $\Sigma$")
 
-    # Panel 6: mean Sigma over the five axes (own y-band, own y-ticks)
+    # Panel 6: mean Sigma over the five axes (own y-band, own y-ticks on
+    # the RIGHT so they do not crowd the last per-axis panel's title)
     ax = axs[5]
     for condition in SLIDE_CONDITIONS:
         c = summaries[condition]["sigma_curve_position"]
@@ -314,6 +315,7 @@ def sigma_overview_figure(summaries):
     ax.set_xlabel("Hop", fontsize=FAX - 1)
     ax.set_title(r"Mean $\Sigma$", fontsize=FTITLE, color="#000")
     ax.set_ylim(-0.01, 0.1)
+    ax.tick_params(labelleft=False, labelright=True, right=True, left=False)
 
     handles = [
         Line2D([0], [0], color=CONDITION_COLORS[c], lw=FLW,
