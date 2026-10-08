@@ -611,6 +611,225 @@ def drift_direction_figure(direction):
     return fig
 
 
+# Per-config robustness strips (2026-10-08, deck pass after Paper 1's):
+# the same question Paper 1's config children answer, for the VS paper.
+# X = the nine decoding configs; dot + 95% seed-clustered bootstrap CI
+# per config and condition (unit of analysis = the seed, the per-seed
+# mean over its nine chains within the config; bootstrap rng 2026,
+# Paper 1's CI seed); both conditions per config (Direct grey at the
+# left offset, VS magenta at the right offset). Canvas 12.3x3.3 in
+# (ratio 3.73), matching Paper 1's two config strips. Inputs are the
+# published exports (no LM calls, no refitting); the Direct side
+# re-derives Paper 1's per-config numbers from the same CSVs, and
+# _per_config_stats asserts the seed counts.
+
+ROBUST_HOP = 200
+ROBUST_BOOT = 2000
+ROBUST_SEED = 2026
+ROBUST_OFFSET = 0.15  # within-config offset, conditions left/right
+ROBUST_CONFIGS = [
+    f"temp{t}_topp{p}"
+    for t in ("0.4", "0.8", "1.0")
+    for p in ("0.3", "0.5", "0.8")
+]
+ROBUST_METRICS = ["cosine", "entail_consistent", "delta_len"]
+ROBUST_PANEL = {
+    "direct": ("#878D96", "Direct"),
+    "vs_weighted": ("#EE5396", "VS"),
+}
+
+
+def _robust_frames(condition):
+    """Per-seed frames for one condition: signed drift and last-hop metrics.
+
+    Axis file: wide (config, msg_id) x axes with signed drift, hop 200
+    minus hop 0, per seed = the mean over the seed's nine chains (same
+    definition as Paper 1's drift_config_robustness, since mean(end) -
+    mean(init) over equally many chains equals the mean per-chain
+    difference). Metrics file: long, wide (config, msg_id) x
+    metric with the per-seed mean at hop 200. No LM calls, no refitting.
+    """
+    ax = pd.read_csv(stats_dir(condition) / "axis_cumulative_long.csv")
+    ax = ax[ax["hop"].isin([0, ROBUST_HOP])]
+    wide = ax.pivot_table(
+        index=["config", "msg_id"], columns="hop", values=AXES
+    )
+    drift = pd.DataFrame(
+        {a: wide[(a, ROBUST_HOP)] - wide[(a, 0)] for a in AXES},
+        index=wide.index,
+    )
+    met = pd.read_csv(stats_dir(condition) / "metrics_last_hop_cumulative.csv")
+    met = met[
+        (met["kind"] == "cumulative")
+        & (met["hop"] == ROBUST_HOP)
+        & met["metric"].isin(ROBUST_METRICS)
+    ]
+    metric = met.pivot_table(
+        index=["config", "msg_id"], columns="metric", values="value"
+    )
+    return {"drift": drift, "metric": metric}
+
+
+def _ci(vals):
+    """Mean + 95% percentile bootstrap over seeds (rng = Paper 1's)."""
+    vals = pd.Series(vals).dropna().to_numpy()
+    n = len(vals)
+    assert n == 50, f"expected 50 seeds, got {n}"
+    rng = np.random.default_rng(ROBUST_SEED)
+    draws = np.empty(ROBUST_BOOT)
+    for b in range(ROBUST_BOOT):
+        idx = rng.integers(0, n, n)
+        draws[b] = vals[idx].mean()
+    return vals.mean(), np.percentile(draws, 2.5), np.percentile(draws, 97.5)
+
+
+def _per_config_stats(per_seed):
+    """{ (metric, config) -> (mean, lo, hi) } from a per-seed frame.
+
+    per_seed: (config, msg_id) index, one column per metric.
+    """
+    stats = {}
+    configs = sorted(set(per_seed.index.get_level_values("config")))
+    assert configs == ROBUST_CONFIGS, f"unexpected configs {configs}"
+    for cfg in ROBUST_CONFIGS:
+        sub = per_seed.xs(cfg, level="config")
+        for metric in sub.columns:
+            stats[(metric, cfg)] = _ci(sub[metric])
+    return stats
+
+
+def _config_strip(metrics, stats, ylabel_by_metric, ylim_by_metric,
+                  zero_line=()):
+    """1xN strip: x = the nine configs, two dots + 95% CIs per config.
+
+    metrics: [(metric, panel title)]; stats: {condition -> {(metric,
+    config) -> (mean, lo, hi)}} from _per_config_stats; zero_line:
+    metrics whose panel draws the dashed zero reference.
+    """
+    n_cfg = len(ROBUST_CONFIGS)
+    xlabels = [
+        c.replace("temp", "T").replace("_topp", ", p=")
+        for c in ROBUST_CONFIGS
+    ]
+    x = np.arange(n_cfg, dtype=float)
+    fig, axs = plt.subplots(
+        1, len(metrics), figsize=(12.3, 3.3), dpi=300
+    )
+    fig.subplots_adjust(left=0.04, right=0.995, top=0.965, bottom=0.30)
+    for ax, (metric, title) in zip(axs, metrics):
+        for condition, off in (("direct", -ROBUST_OFFSET),
+                               ("vs_weighted", ROBUST_OFFSET)):
+            color, name = ROBUST_PANEL[condition]
+            means = np.array([
+                stats[condition][(metric, c)][0] for c in ROBUST_CONFIGS
+            ])
+            los = np.array([
+                stats[condition][(metric, c)][1] for c in ROBUST_CONFIGS
+            ])
+            his = np.array([
+                stats[condition][(metric, c)][2] for c in ROBUST_CONFIGS
+            ])
+            if metric in zero_line:
+                ax.axhline(0, color="#666666", lw=0.6, ls="--",
+                           alpha=0.6, zorder=1)
+            ax.errorbar(
+                x + off,
+                means,
+                yerr=[means - los, his - means],
+                fmt="o",
+                ms=3.5,
+                lw=1.4,
+                capsize=2.0,
+                color=color,
+                ecolor=color,
+                zorder=3,
+                label=name,
+            )
+        for sp in ax.spines.values():
+            sp.set_color("#444444")
+            sp.set_linewidth(0.7)
+        ax.tick_params(labelsize=10, width=0.7, colors="#000")
+        ax.grid(linestyle=":", linewidth=0.8, alpha=0.5)
+        ax.set_xticks(x)
+        ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=8)
+        ax.set_xlim(-0.5, n_cfg - 0.5)
+        lo, hi = ylim_by_metric[metric]
+        ax.set_ylim(lo, hi)
+        ax.set_title(title, fontsize=10)
+    handles = [
+        Line2D([0], [0], color=ROBUST_PANEL[c][0], marker="o", lw=1.4,
+               label=ROBUST_PANEL[c][1])
+        for c in ("direct", "vs_weighted")
+    ]
+    fig.legend(
+        handles=handles,
+        labels=[h.get_label() for h in handles],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.0),
+        ncol=2,
+        **LEGEND_KW,
+    )
+    axs[0].set_ylabel(ylabel_by_metric[metrics[0][0]], fontsize=10)
+    fig.tight_layout(pad=0.4)
+    return fig
+
+
+def drift_config_vs_figure(axis_frames):
+    """Backup child: per-axis endpoint drift per config, Direct vs VS.
+
+    Paper 1's drift_config_robustness() layout (slide_drift_config.png),
+    extended to both conditions: one panel per axis, x = the nine
+    decoding configs, Direct grey / VS magenta, dot + 95% seed-clustered
+    CI per config and condition (rng 2026, Paper 1's CI seed). Verified
+    reads (2026-10-08): factual->narrative and abstract->concrete
+    exclude zero in 9/9 configs under VS (means -0.078..-0.057 and
+    -0.091..-0.059); the VS extremity reversal shows in every config's
+    mean (-0.049..-0.019) but is CI-certain in only 1/9 (the qa note);
+    valence and intensity cross zero everywhere, as in Paper 1.
+    axis_frames: {} from _robust_frames()["drift"].
+    """
+    stats = {c: _per_config_stats(axis_frames[c]) for c in SLIDE_CONDITIONS}
+    metrics = [(a, AXIS_LABELS[a]) for a in AXES]
+    ylim = {a: (-0.13, 0.13) for a in AXES}
+    return _config_strip(
+        metrics, stats,
+        {a: "mean signed drift (axis units)" for a in AXES},
+        ylim, zero_line=AXES,
+    )
+
+
+def fidelity_config_vs_figure(metric_frames):
+    """Backup child: seed fidelity and length per config, Direct vs VS.
+
+    Paper 1's fidelity_config_robustness() layout (its 2026-10-08 1x3
+    form), here with both conditions: cosine similarity and mutual
+    entailment share a 0..1 y-axis (the VS collapse reads against
+    Direct's near-seed level), the length panel keeps its own band and
+    draws the zero line. Verified reads (2026-10-08): Direct cosine
+    0.83..0.89 and entailment 0.62..0.82 per config; VS cosine
+    0.57..0.61 and entailment 0.03..0.08 in every config; length
+    contracts under VS (about -9.7 to -10.9 tokens, CIs exclude zero in
+    9/9) while Direct grows (+2.7 to +8.8).
+    metric_frames: {} from _robust_frames()["metric"].
+    """
+    stats = {c: _per_config_stats(metric_frames[c]) for c in SLIDE_CONDITIONS}
+    metrics = [(m, t) for m, t in [
+        ("cosine", "Cosine similarity"),
+        ("entail_consistent", "Mutual entailment"),
+        ("delta_len", "Length change (tokens)"),
+    ]]
+    ylim = {
+        "cosine": (0.0, 1.0),
+        "entail_consistent": (0.0, 1.0),
+        "delta_len": (-14, 14),
+    }
+    return _config_strip(
+        metrics, stats,
+        {m: "mean at hop 200" for m, _ in metrics},
+        ylim, zero_line=("delta_len",),
+    )
+
+
 def main():
     setup()
     summaries = {}
@@ -703,6 +922,20 @@ def main():
                   f"{dd['mean'][ax]:+.4f}  [{dd['ci95_lo'][ax]:+.4f},"
                   f" {dd['ci95_hi'][ax]:+.4f}]")
     save_fig(drift_direction_figure(direction), "slide_drift_direction")
+
+    # Per-config robustness strips (2026-10-08): one axis-level and one
+    # metric-level strip, both conditions, seed-clustered CIs per
+    # config. Inputs: the published hop 0/200 axis exports and the
+    # last-hop metric exports (Direct = the root stats dir, VS =
+    # vs_weighted/). The Direct side re-derives Paper 1's strips from
+    # the same data; _robust_frames asserts the nine-config grid and
+    # _ci asserts 50 seeds per cell.
+    axis_frames = {c: _robust_frames(c)["drift"] for c in SLIDE_CONDITIONS}
+    metric_frames = {c: _robust_frames(c)["metric"] for c in SLIDE_CONDITIONS}
+    save_fig(drift_config_vs_figure(axis_frames), "slide_drift_config_vs",
+             tight=True)
+    save_fig(fidelity_config_vs_figure(metric_frames),
+             "slide_fidelity_config_vs", tight=True)
 
 
 if __name__ == "__main__":
