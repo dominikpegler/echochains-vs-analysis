@@ -105,10 +105,10 @@ HOP = 200
 
 AXIS_LABELS = {
     "valence_neg_to_pos": "Valence",
-    "tone_neutral_to_intense": "Tone intensity",
+    "tone_neutral_to_intense": "Intensity",
     "moderate_to_extreme": "Extremity",
-    "factual_to_narrative": "Factual vs narrative",
-    "abstract_to_concrete": "Abstract vs concrete",
+    "factual_to_narrative": "Factual→narrative",
+    "abstract_to_concrete": "Abstract→concrete",
 }
 
 # Conditions for the slides: Direct and VS only.
