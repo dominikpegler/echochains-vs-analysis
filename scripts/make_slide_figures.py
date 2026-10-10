@@ -58,6 +58,7 @@ Run (echochain conda env):
 """
 
 from pathlib import Path
+import json
 import sys
 
 import matplotlib
@@ -113,6 +114,28 @@ AXIS_LABELS = {
 
 # Conditions for the slides: Direct and VS only.
 SLIDE_CONDITIONS = ["direct", "vs_weighted"]
+
+# Paper 1's slide condition color: the deck's observed steelblue
+# (DATA_COLORS["observed"] in echochains-sim-analysis; the Paper 1
+# block's deck figures render in it, and the 2026-10-10 deck-style pass
+# keeps the paper's published fig_drift_direction steelblue).
+P1_OBSERVED = "#4682B4"
+
+# The paper's published pooled drift-direction block (Paper 1's
+# seed-clustered CIs); the Direct slide figures verify against it.
+PAPER_POOLED_JSON = Path(
+    "/home/user/code/echochains-sim-analysis/cache/seed_chain_analyses.json"
+)
+
+# The published pooled block's display keys (untouched by the
+# 2026-10-10 axis rename) per this file's AXES key.
+PAPER_KEY = {
+    "valence_neg_to_pos": "valence",
+    "tone_neutral_to_intense": "intensity",
+    "moderate_to_extreme": "extremity",
+    "factual_to_narrative": "style",
+    "abstract_to_concrete": "concreteness",
+}
 
 
 def stats_dir(condition):
@@ -224,9 +247,16 @@ def setup():
     )
 
 
-def save_fig(fig, fname):
+def save_fig(fig, fname, tight=True):
+    """Render PNG+PDF to OUT and copy both into the deck's img/.
+
+    tight=True keeps the bbox-tight pass (a figure-top legend sits
+    outside the axes and needs it; the two robustness-strip calls
+    already passed tight=True, which the one-parameter signature
+    rejected -- latent bug fixed 2026-10-10).
+    """
     OUT.mkdir(parents=True, exist_ok=True)
-    F.save(fig, OUT / fname, formats=("pdf", "png"), dpi_png=300, tight=True)
+    F.save(fig, OUT / fname, formats=("pdf", "png"), dpi_png=300, tight=tight)
     F.file_dimensions(OUT, fname, print_only=True)
     # deck copies
     for ext in ("png", "pdf"):
@@ -581,17 +611,21 @@ def drift_direction_figure(direction):
 
     Paper 1's direction child plots one dot + 95% CI per axis (mean
     signed drift, hop 200 minus hop 0). This variant keeps the same
-    layout, x-label wording, and axis order, but groups the two
-    conditions side by side per axis (Direct grey, VS magenta) so the
-    direction change reads on one plot. 2026-10-03, deck TODO: where
-    does VS drift on the semantic axes (Paper 2's real-drift case).
+    layout, x-label wording, and axis order (Valence on top), but
+    groups the two conditions side by side per axis (Direct grey, VS
+    magenta) so the direction change reads on one plot. 2026-10-03,
+    deck TODO: where does VS drift on the semantic axes (Paper 2's
+    real-drift case). 2026-10-10 style pass: the condition legend moved
+    out of the axes to directly on top of the plot (ncol=2, no frame),
+    the deck's figure-top convention, and the deck gained
+    drift_direction_direct_figure beside this one (see there).
     """
     fig, ax = plt.subplots(figsize=(mm_to_in(160), mm_to_in(88)))
 
     n_axes = len(AXES)
     y = np.arange(n_axes, dtype=float)
     offset = 0.19  # within-group offset, conditions above/below the tick
-    for k, condition in enumerate(SLIDE_CONDITIONS):
+    for condition in SLIDE_CONDITIONS:
         dd = direction[condition]
         means = np.array([dd["mean"][a] for a in AXES])
         lo = np.array([dd["ci95_lo"][a] for a in AXES])
@@ -599,15 +633,83 @@ def drift_direction_figure(direction):
         yy = y + (offset if condition == "vs_weighted" else -offset)
         color = CONDITION_COLORS[condition]
         ax.hlines(yy, lo, hi, color=color, lw=1.6)
-        ax.scatter(means, yy, s=24, color=color, zorder=3,
-                   label=CONDITION_LABELS[condition])
+        ax.scatter(means, yy, s=24, color=color, zorder=3)
 
     ax.axvline(0.0, color="#888888", lw=0.8, alpha=0.7)
     ax.set_yticks(y)
     ax.set_yticklabels([AXIS_LABELS[a] for a in AXES])
-    ax.invert_yaxis()  # Paper 1's direction child lists Valence on top
+    ax.invert_yaxis()  # Valence on top, both deck direction figures
     ax.set_xlabel("Mean signed drift, hop 200 minus hop 0 (axis units)")
-    ax.legend(**LEGEND_KW)
+    handles = [
+        Line2D([0], [0], color=CONDITION_COLORS[c], lw=1.6,
+               marker="o", ms=4, label=CONDITION_LABELS[c])
+        for c in SLIDE_CONDITIONS
+    ]
+    ax.legend(
+        handles=handles,
+        labels=[h.get_label() for h in handles],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.0),
+        ncol=2,
+        **LEGEND_KW,
+    )
+    return fig
+
+
+def check_direct_against_paper(direction):
+    """The Direct side IS Paper 1's data; verify against the published
+    pooled block (seed-clustered CIs,
+    echochains-sim-analysis cache/seed_chain_analyses.json) before a
+    slide figure renders it. Pass 4 established the protocol match
+    (unit = seed, rng 2026); the bootstrap percentile rounding may
+    differ by a hair, hence the small tolerance.
+    """
+    pooled = json.load(open(PAPER_POOLED_JSON))["drift_direction"]["pooled"]
+    assert pooled["n_seeds"] == 50
+    dd = direction["direct"]
+    worst = 0.0
+    worst_site = None
+    for axis, disp in PAPER_KEY.items():
+        for stat in ("mean", "ci95_lo", "ci95_hi"):
+            mine = float(dd[stat][axis])
+            ref = float(pooled[stat][disp])
+            if abs(mine - ref) > worst:
+                worst = abs(mine - ref)
+                worst_site = (axis, stat)
+    assert worst < 0.003, f"Direct drift diverges from the published block by {worst:.4f}"
+    print(f"Direct drift matches the published pooled block "
+          f"(max |diff| {worst:.4f} at {worst_site})")
+
+
+def drift_direction_direct_figure(direction):
+    """Paper 1's slide variant: Direct only, one row per axis.
+
+    The deck's Paper 1 direction child ("Drift is small on average but
+    directional") showed the paper's fig_drift_direction raster (nature
+    profile, lowercase x-label, Abstract->concrete on top). 2026-10-10
+    deck-style pass: the slide moved to a deck-only figure in THIS
+    script so both drift-direction slides read as one family: the same
+    canvas, fonts, axis order (Valence on top), x-label form, zero
+    line, and row rendering as drift_direction_figure, with the
+    paper's figure left untouched (its suite stays steelblue). The
+    single condition keeps the deck's observed steelblue, sits at the
+    tick (no offsets), and carries no legend (the reading line states
+    the condition; "Direct" debuts later in the deck, in Paper 2's
+    blocks).
+    """
+    fig, ax = plt.subplots(figsize=(mm_to_in(160), mm_to_in(88)))
+    dd = direction["direct"]
+    means = np.array([dd["mean"][a] for a in AXES])
+    lo = np.array([dd["ci95_lo"][a] for a in AXES])
+    hi = np.array([dd["ci95_hi"][a] for a in AXES])
+    y = np.arange(len(AXES), dtype=float)
+    ax.hlines(y, lo, hi, color=P1_OBSERVED, lw=1.6)
+    ax.scatter(means, y, s=24, color=P1_OBSERVED, zorder=3)
+    ax.axvline(0.0, color="#888888", lw=0.8, alpha=0.7)
+    ax.set_yticks(y)
+    ax.set_yticklabels([AXIS_LABELS[a] for a in AXES])
+    ax.invert_yaxis()  # same order as drift_direction_figure: Valence top
+    ax.set_xlabel("Mean signed drift, hop 200 minus hop 0 (axis units)")
     return fig
 
 
@@ -830,8 +932,10 @@ def fidelity_config_vs_figure(metric_frames):
     )
 
 
-def main():
-    setup()
+def build_summaries():
+    """Per-condition processing shared by main() and the targeted
+    re-renders (deck style passes regenerate single figures, not the
+    full main() run)."""
     summaries = {}
     for condition in SLIDE_CONDITIONS:
         df_axis = load_axis(condition)
@@ -871,6 +975,12 @@ def main():
         summaries[condition] = s
         del df_axis
         print(f"processed {condition}")
+    return summaries
+
+
+def main():
+    setup()
+    summaries = build_summaries()
 
     seed = pick_widening_seed(summaries, "factual_to_narrative")
     print("widening seed:", seed)
@@ -921,6 +1031,9 @@ def main():
             print(f"  {condition:12s} {AXIS_LABELS[ax]:22s} "
                   f"{dd['mean'][ax]:+.4f}  [{dd['ci95_lo'][ax]:+.4f},"
                   f" {dd['ci95_hi'][ax]:+.4f}]")
+    check_direct_against_paper(direction)
+    save_fig(drift_direction_direct_figure(direction),
+             "slide_drift_direction_direct")
     save_fig(drift_direction_figure(direction), "slide_drift_direction")
 
     # Per-config robustness strips (2026-10-08): one axis-level and one
