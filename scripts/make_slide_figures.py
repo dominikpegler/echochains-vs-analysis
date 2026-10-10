@@ -639,7 +639,7 @@ def drift_direction_figure(direction):
     ax.set_yticks(y)
     ax.set_yticklabels([AXIS_LABELS[a] for a in AXES])
     ax.invert_yaxis()  # Valence on top, both deck direction figures
-    ax.set_xlabel("Mean signed drift, hop 200 minus hop 0 (axis units)")
+    ax.set_xlabel("Mean drift (and 95% CIs), hop 200 minus hop 0 (axis units)")
     handles = [
         Line2D([0], [0], color=CONDITION_COLORS[c], lw=1.6,
                marker="o", ms=4, label=CONDITION_LABELS[c])
@@ -709,7 +709,7 @@ def drift_direction_direct_figure(direction):
     ax.set_yticks(y)
     ax.set_yticklabels([AXIS_LABELS[a] for a in AXES])
     ax.invert_yaxis()  # same order as drift_direction_figure: Valence top
-    ax.set_xlabel("Mean signed drift, hop 200 minus hop 0 (axis units)")
+    ax.set_xlabel("Mean drift (and 95% CIs), hop 200 minus hop 0 (axis units)")
     return fig
 
 
