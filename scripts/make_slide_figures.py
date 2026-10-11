@@ -294,11 +294,19 @@ def sigma_overview_figure(summaries):
 
     Deck pass 4/5: the headline is ONE row of six Sigma panels -- the
     five per-axis Sigma(h) curves plus the mean-over-axes curve as the
-    right-most panel (its y-band -0.01..0.1 differs from the per-axis
-    -0.005..0.05 band, so it keeps its own y-ticks). The pass-4
-    trajectory row was a misunderstanding of the user's request and is
-    removed (those curves live on the "How the mean trajectory bends"
-    child already).
+    right-most panel. The pass-4 trajectory row was a misunderstanding
+    of the user's request and is removed (those curves live on the "How
+    the mean trajectory bends" child already).
+
+    2026-10-11 (user: one scale, ticks on the first panel): all six
+    panels share the per-axis band -0.005..0.05, and the y-ticks sit on
+    the left of the first panel only. The shared band is safe because
+    the mean-over-axes curve is bounded by the largest per-axis curve
+    (VS 0.0295 vs valence 0.0432; Direct 0.0035), so the former own
+    band -0.01..0.1 with right-side ticks on the mean panel is retired
+    (the retired pass-5 note: left-side ticks on the mean panel
+    collided with the neighboring panel's title; ticks on the FIRST
+    panel do not, that side carries only the ylabel).
     """
     fig, axs = F.make_grid(
         width_mm=250,
@@ -310,7 +318,8 @@ def sigma_overview_figure(summaries):
         flatten=True,
     )
 
-    # Panels 1-5: per-axis Sigma(h), averaged over seeds and configs
+    # Panels 1-5: per-axis Sigma(h), averaged over seeds and configs;
+    # y-tick labels on the first panel only (the shared scale's anchor)
     for i, (ax, axis) in enumerate(zip(axs[:5], AXES)):
         for condition in SLIDE_CONDITIONS:
             c = summaries[condition]["sigma_curve_per_axis"]
@@ -324,14 +333,14 @@ def sigma_overview_figure(summaries):
         ax.set_xlabel("Hop", fontsize=FAX - 1)
         ax.set_title(AXIS_LABELS[axis], fontsize=FTITLE, color="#000")
         ax.set_ylim(-0.005, 0.05)
-        if i < 5:
+        if i > 0:
             ax.tick_params(labelleft=False)
         if i == 4:
             ax.tick_params(labelsize=FAX - 1)
     axs[0].set_ylabel(r"Per-axis $\Sigma$")
 
-    # Panel 6: mean Sigma over the five axes (own y-band, own y-ticks on
-    # the RIGHT so they do not crowd the last per-axis panel's title)
+    # Panel 6: mean Sigma over the five axes, on the SAME band as the
+    # per-axis panels (the mean is bounded by the largest axis curve)
     ax = axs[5]
     for condition in SLIDE_CONDITIONS:
         c = summaries[condition]["sigma_curve_position"]
@@ -344,8 +353,8 @@ def sigma_overview_figure(summaries):
         )
     ax.set_xlabel("Hop", fontsize=FAX - 1)
     ax.set_title(r"Mean $\Sigma$", fontsize=FTITLE, color="#000")
-    ax.set_ylim(-0.01, 0.1)
-    ax.tick_params(labelleft=False, labelright=True, right=True, left=False)
+    ax.set_ylim(-0.005, 0.05)
+    ax.tick_params(labelleft=False)
 
     handles = [
         Line2D([0], [0], color=CONDITION_COLORS[c], lw=FLW,
