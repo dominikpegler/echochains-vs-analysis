@@ -7,15 +7,21 @@ fewer chains, or keep 50 seeds x 9 chains?
 Monte Carlo over design variants under the exploratory pilot's
 distribution, two source layers:
 
-1. Seed population (EMPIRICAL): per-seed, per-axis Sigma values from the
+1. Seed population (EMPIRICAL): per-seed, per-axis variances from the
    pilot's sigma_at_hop200.csv (50 seeds x 9 configs x 5 axes, averaged over
    configs). Designs with more than 50 seeds bootstrap seed rows with
    replacement, so larger-seed designs sample the same population harder.
-2. Chain-sampling noise (ANALYTIC): a cell with C chains estimates the cell
-   variance as sigma^2 x chi^2(df=C-1)/(C-1); the simulation draws exactly
-   that, paired across arms seed-by-seed (the same seed text runs under both
-   conditions in the real design, so its heterogeneity cancels in the
-   contrast).
+2. Chain-sampling noise (ANALYTIC): the pilot values are variances; a cell's
+   measured variance equals the true variance times a chi-square draw with
+   df = chains - 1, divided by the same number, paired across arms
+   seed-by-seed (the same seed text runs under both conditions in the real
+   design, so its heterogeneity cancels in the contrast). The MDE column is
+   evaluated at the pilot effect scale: the sampling variation of the
+   mean-difference grows with the effect size, because the seed-level
+   heterogeneity of the VS arm scales with it. For scale-independent
+   justification (scenario ratios), use power_analysis_prereg.py, which
+   reads out the chance of finding a given ratio directly with the same
+   within-run test.
 
 For each budget-neutral design (seeds x chains per condition) the script
 reports:
@@ -113,9 +119,9 @@ def simulate_design(pop, mu, sigma_mu, seeds, chains, reps, rng):
         idx = rng.integers(0, n_pop, size=seeds)   # bootstrap seed rows
         cell_var, true_sig = {}, {}
         for arm in ARMS.values():
-            true = pop[arm][idx]                 # (seeds, axes) true sigma
+            true = pop[arm][idx]   # (seeds, axes) true variances
             chi = rng.chisquare(chains - 1, size=(seeds, axes_n)) / (chains - 1)
-            cell_var[arm] = true**2 * chi        # per-cell sample variances
+            cell_var[arm] = true * chi   # per-cell measured variances
             true_sig[arm] = true
         diff = cell_var["vs_weighted"] - cell_var["direct"]
         overall.append(diff.mean())
@@ -124,8 +130,8 @@ def simulate_design(pop, mu, sigma_mu, seeds, chains, reps, rng):
             genre[g].append(diff[start : start + gsize].mean())
             start += gsize
         # per-seed sigma recovery (VS arm, axes-averaged)
-        est = np.sqrt((cell_var["vs_weighted"]).mean(axis=1))
-        tru = true_sig["vs_weighted"].mean(axis=1)
+        est = (cell_var["vs_weighted"]).mean(axis=1)
+        tru = (true_sig["vs_weighted"]).mean(axis=1)
         rhos.append(pd.Series(est).rank().corr(pd.Series(tru).rank()))
         # mu contrast on the target axis: per-chain slope estimates
         denom = math.sqrt(N_HOPS_SLOPE) * N_HOPS_SLOPE / math.sqrt(12)
