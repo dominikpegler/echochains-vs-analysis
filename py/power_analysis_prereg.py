@@ -8,7 +8,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.18.1
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -22,7 +22,7 @@
 #     name: python
 #     nbconvert_exporter: python
 #     pygments_lexer: ipython3
-#     version: 3.12.11
+#     version: 3.11.11
 # ---
 
 # %% [markdown]
@@ -30,30 +30,29 @@
 #
 # This notebook justifies the planned study size for the preregistration.
 # The planned design is 90 seed texts, 5 chains per text, and 200 hops per
-# chain, for each of four tasks and four conditions. The question here is
-# narrow: is that enough to find the effect that matters most?
+# chain, for each of four tasks and four conditions.
 #
-# The main preregistered prediction is that verbalized sampling (VS), the
-# practice of asking a model for several candidate texts with stated
-# probabilities, keeps chains from looking alike over time. We measure this
-# as the spread of chain endings for the same seed text. The pilot study
-# measured that spread under VS and under Direct prompting with one small
-# model. The spread under VS was 8.5 times the spread under Direct.
+# **Is that enough for the two preregistered effects?**
 #
-# We answer the question by simulation in three steps. First, we take the
-# measured spreads of the 50 pilot texts as the best available guess for how
-# much texts really differ. Second, we note that measuring a spread with 5
-# chains gives an imperfect estimate, and that the size of this imperfection
-# follows a known statistical rule, which we use directly. Third, we pretend
-# to run the planned study many times, and we count how often it would find
-# a difference that is really there.
+# The first prediction: verbalized sampling (VS), the practice of asking a
+# model for several candidate texts with stated probabilities, keeps chains
+# diverse (measured as the variance of the last hops). In the pilot, the
+# variance under VS was 8.5 times the variance under Direct. The second
+# prediction: VS transmits less of what the seed said (measured as the
+# similarity of the last hop to the seed text).
 #
-# The short answer: the planned design finds the pilot-sized effect in
-# essentially every simulated run, even when we look at one kind of text
-# alone. It would still find, with a nine in ten chance, an effect more than
-# five times weaker than the one the pilot measured. We checked smaller
-# designs at the same total workload, and they find weaker effects less
-# often, not more.
+# We answer the question by simulation in three steps. 
+# 1. We take the variance of the 50 pilot texts as the best available guess for how much texts really differ.
+# 2. We note that measuring a spread with 5 chains gives an imperfect estimate, and that the size of this imperfection follows a known statistical rule, which we use directly.
+# 3. We pretend to run the planned study many times, and we count how often it would find a difference that is really there.
+#
+# The short answer: the planned design finds the pilot-sized diversity
+# effect in essentially every simulated run, even when we look at one kind
+# of text alone. It would still find, with a nine in ten chance, a diversity
+# effect more than five times weaker than the one the pilot measured. The
+# similarity effect is found just as easily. We checked smaller designs at
+# the same total workload, and they find weaker effects less often, not
+# more.
 
 # %%
 import json
@@ -301,6 +300,141 @@ table
 # designs lose the per-text information almost entirely.
 
 # %% [markdown]
+# ## The second preregistered effect: does VS cost information?
+#
+# The spread result says little without its price tag. The paper's second
+# preregistered prediction is that VS keeps chains diverse but transmits
+# less of what the seed said. The measure is the last hop's similarity to
+# the seed text, a score that is 1 when two texts say the same thing and
+# falls as they drift apart. Direct prompting should keep this score high,
+# VS should lower it.
+#
+# This part is a mean, not a variance, so the measurement logic from above
+# simplifies: for one seed, the per-chain similarity scores are averaged,
+# and the average of 5 chain values jitters around the seed's true value by
+# an amount that follows directly from how much the chains disagree with
+# each other in the pilot.
+
+# %%
+def load_seed_fidelity(rel_path, metric="cosine"):
+    """Per seed, two numbers: the mean and the disagreement (variance across
+    chains) of the last hop's similarity. Primary decoding setting of the
+    pilot (temperature 0.8, top-p 0.5), as in the confirmatory study."""
+    fp = DATA_DIR / "data" / "echodrift_stats" / rel_path
+    df = pd.read_csv(fp, usecols=["config", "msg_id", "metric", "value"])
+    df = df[(df["metric"] == metric) & (df["config"] == "temp0.8_topp0.5")]
+    per_seed = df.groupby("msg_id")["value"].agg(["mean", "var"])
+    return per_seed["mean"].to_numpy(), per_seed["var"].fillna(0.0).to_numpy()
+
+
+fid_direct, wid_direct = load_seed_fidelity("metrics_last_hop_cumulative.csv")
+fid_vs, wid_vs = load_seed_fidelity("vs_weighted/metrics_last_hop_cumulative.csv")
+drop_pilot = fid_direct.mean() - fid_vs.mean()
+print(f"last-hop similarity: Direct {fid_direct.mean():.3f}, "
+      f"VS {fid_vs.mean():.3f}, drop {drop_pilot:.3f} (50 texts)")
+
+# %%
+def chance_of_finding_drop(fid_direct, wid_direct, fid_vs, wid_vs, n_texts,
+                           chains, reps, rng, drop):
+    """Chance of finding a similarity drop of the given size.
+
+    Same procedure as the spread part, with one difference: the per-chain
+    similarity is a simple measurement, so the seed's measured mean carries
+    the chains' disagreement divided by the chain count, drawn as a normal
+    error.
+    """
+    n_pilot = len(fid_direct)
+    pilot_drop = fid_direct - fid_vs
+    found = 0
+    for _ in range(reps):
+        idx = rng.integers(0, n_pilot, size=n_texts)
+        vs_true = fid_direct[idx] - pilot_drop[idx] * (drop / drop_pilot)
+        direct_true = fid_direct[idx]
+        vs_meas = vs_true + rng.normal(0.0, np.sqrt(wid_vs[idx] / chains))
+        direct_meas = direct_true + rng.normal(0.0,
+                                               np.sqrt(wid_direct[idx] / chains))
+        d = direct_meas - vs_meas
+        se = np.std(d, ddof=1) / math.sqrt(n_texts)
+        if abs(d.mean()) > 1.96 * se:
+            found += 1
+    return found / reps
+
+
+rng = np.random.default_rng(11)
+rows = []
+for drop in [0.0, 0.05, 0.10, 0.15, drop_pilot]:
+    c_all = chance_of_finding_drop(fid_direct, wid_direct, fid_vs, wid_vs,
+                                   90, 5, 2000, rng, drop)
+    c_kind = chance_of_finding_drop(fid_direct, wid_direct, fid_vs, wid_vs,
+                                    30, 5, 2000, rng, drop)
+    rows.append((f"{drop:.2f}", f"{c_all:.0%}", f"{c_kind:.0%}"))
+table = pd.DataFrame(rows, columns=[
+    "assumed similarity drop (VS below Direct)",
+    "chance, all 90 texts",
+    "chance, one kind of text (30 texts)",
+])
+print(table.to_string(index=False))
+table
+
+# %% [markdown]
+# ## How well can the study certify that VS leaves the drift unchanged?
+#
+# The first hypothesis has a second part. Beyond raising the spread, VS is
+# predicted to leave the drift unchanged: the texts should not slide along
+# the scales, in the average across the five scales, by more than a
+# preregistered bound of 0.005 scale units per hop. The preregistered rule
+# requires the whole uncertainty interval of the measured difference
+# between VS and Direct to fit inside that bound.
+#
+# Certification therefore rests on how wide that interval is. Its width
+# comes from two sources: the texts differ in their drift, and the 5 chains
+# of a seed measure the seed's drift with an error. Both can be read off
+# the pilot. The pilot's own drift numbers are tiny. At the primary
+# decoding setting, the drift difference measures about 0.0006 scale units
+# per hop, roughly eight times smaller than the bound, so the interval fits
+# inside the bound with room to spare.
+#
+# The directional part of the fidelity hypothesis (the per-scale drift
+# toward more abstract and more general language) uses this same drift
+# machinery broken out per scale, so the width computed here applies to
+# those contrasts too.
+
+# %%
+def per_seed_drift(rel_path):
+    """Per chain and per scale, the slope of the scale score on the hop
+    number, then two numbers per seed: the mean absolute drift and its
+    disagreement across chains (variance). Primary decoding setting of the
+    pilot (temperature 0.8, top-p 0.5), as in the confirmatory study."""
+    fp = DATA_DIR / "data" / "echodrift_stats" / rel_path
+    df = pd.read_csv(fp, usecols=["config", "msg_id", "chain", "hop"] + AXES)
+    df = df[df["config"] == "temp0.8_topp0.5"]
+    df["hc"] = df["hop"] - df["hop"].mean()
+    g = df.groupby(["msg_id", "chain"], sort=True)
+    hc2 = float((df["hc"] ** 2).sum()) / g.ngroups   # same hop grid per chain
+    for axis in AXES:
+        df[axis] = (df[axis] - g[axis].transform("mean")) * df["hc"]
+    slopes = g[AXES].sum() / hc2                       # (450 chains, 5 scales)
+    chain_drift = slopes.abs().mean(axis=1)
+    per_seed = chain_drift.groupby(level="msg_id").agg(["mean", "var"])
+    return per_seed["mean"].to_numpy(), per_seed["var"].fillna(0.0).to_numpy()
+
+
+drift_direct, w_drift_direct = per_seed_drift("axis_cumulative_long.csv")
+drift_vs, w_drift_vs = per_seed_drift("vs_weighted/axis_cumulative_long.csv")
+bound = 0.005
+print(f"mean absolute drift per hop: Direct {drift_direct.mean():.6f}, "
+      f"VS {drift_vs.mean():.6f} (primary setting, 50 texts)")
+print(f"bound: {bound}")
+
+# Interval half-width at the planned design (90 texts, 5 chains):
+between = (drift_vs - drift_direct).var(ddof=1)
+within = float(np.mean(w_drift_vs + w_drift_direct)) / 5  # chains per seed
+half_width = 1.96 * np.sqrt(between / 90 + within / 90)
+print(f"uncertainty interval half-width at 90 texts x 5 chains: "
+      f"{half_width:.6f} scale units")
+print(f"the bound allows {bound / half_width:.1f} times this width")
+
+# %% [markdown]
 # ## What this means for the preregistration
 #
 # The preregistered size of 90 seed texts and 5 chains is justified on three
@@ -318,14 +452,28 @@ table
 #    still ranks the texts usefully (rank agreement 0.86), which the
 #    analyses of individual texts rely on.
 #
+# The second preregistered effect gets the same verdict. The similarity
+# drop is found in every simulated run, even at one fifth of the pilot's
+# size and even inside one kind of text alone (99 percent there). And the
+# drift equivalence claim is comfortably within reach: at the planned
+# design, the uncertainty interval around the measured drift difference is
+# over 70 times narrower than the preregistered bound allows, and the
+# pilot's own drift difference sits about eight times inside the bound.
+#
 # Two caveats belong in the preregistration.
 #
-# The check reuses measured spreads from 50 pilot texts of one small model
-# under the paraphrase task. It assumes the other texts and tasks behave
-# similarly, which is the standard assumption for such a check and not a
-# guarantee.
+# The check reuses measured spreads and fidelities from 50 pilot texts of
+# one small model under the paraphrase task. It assumes the other texts and
+# tasks behave similarly, which is the standard assumption for such a check
+# and not a guarantee.
 #
-# The simulated test is the simplest possible analysis of the average spread
-# difference. The preregistered analysis pools information across texts and
-# scales in a stricter way, which can only improve on this check. So the
-# chances reported here are, if anything, a floor.
+# The fidelity measure brings an extra source of variation: the chains of
+# one seed disagree in how much of the seed survives, so the per-text
+# similarity scores have a real spread of their own. The simulation carries
+# that spread, read off the pilot, and with it the design still finds even
+# small similarity drops.
+#
+# The simulated test is the simplest possible analysis of each average. The
+# preregistered analysis pools information across texts and scales in a
+# stricter way, which can only improve on this check. So the chances
+# reported here are, if anything, a floor.
