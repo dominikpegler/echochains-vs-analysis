@@ -1,9 +1,11 @@
-"""Confirmatory design-size and cost model for the VS paper (3-task lock).
+"""Confirmatory design-size and cost model for the VS paper (4-task lock).
 
 Recomputes transmitted texts, prompt calls, and API token spend from the
 locked design constants instead of hand arithmetic. The task set is the
-2026-10-30 lock: paraphrase, take inspiration, expand+compress ("continue"
-dropped, so no length cap applies).
+2026-10-30 lock plus the same-day addition of improve: paraphrase, improve,
+take inspiration, expand+compress ("continue" dropped, so no length cap
+applies). paraphrase, improve, and take inspiration share the one
+50-sentence seed set; expand+compress runs on the long-text band.
 
 Token counts split into MEASURED (exploratory pilot, vs_weighted logs,
 2026-10-30 session) and ASSUMED. The ASSUMED entries are the dominant
@@ -26,7 +28,7 @@ import argparse
 from dataclasses import dataclass
 
 # --- design constants (2026-10-30 lock) ------------------------------------
-TASKS = ("paraphrase", "take_inspiration", "expand+compress")
+TASKS = ("paraphrase", "improve", "take_inspiration", "expand+compress")
 CONDITIONS = ("direct", "multi_k_uniform", "vs_weighted", "vs_argmax")
 # Prompt calls per hop stage under each condition. Multi-k uniform sends k
 # separate task-prompt calls per hop (the paper's definition); the VS calls
@@ -59,6 +61,12 @@ TASK_STAGES: dict[str, list[Stage]] = {
     "paraphrase": [
         Stage("paraphrase", 65, 34, "measured"),   # system+user block; 95 total - 30 seed
     ],
+    "improve": [
+        # registry single turn, no system prompt (instruction ~48 tokens);
+        # response length ASSUMED at the paraphrase band (improved text of
+        # similar length).
+        Stage("improve", 48, 40, "assumed"),
+    ],
     "take_inspiration": [
         # Perez single turn, no system prompt; response length ASSUMED at the
         # paraphrase band (the task outputs a new text of similar length).
@@ -71,6 +79,7 @@ TASK_STAGES: dict[str, list[Stage]] = {
 }
 TASK_BAND = {
     "paraphrase": "sentence",
+    "improve": "sentence",
     "take_inspiration": "sentence",
     "expand+compress": "long",
 }
@@ -155,11 +164,11 @@ def main() -> None:
           f"{sum(r['usd'] for r in rows if r['task']=='expand+compress')/usd:.0%} "
           f"(dominated by ASSUMED long-text VS response lengths).")
 
-    # Locked-recount checks (handoff 2026-10-30): 1,080,000 transmitted and
-    # ~2,880,000 prompt calls per model.
-    assert tr == 1_080_000, tr
-    assert cl == 2_880_000, cl
-    print("\nrecount checks passed: transmitted 1,080,000; prompt calls 2,880,000 (per model)")
+    # Locked-recount checks (handoff 2026-10-30): 1,440,000 transmitted and
+    # 3,600,000 prompt calls per model for the 4-task design.
+    assert tr == 1_440_000, tr
+    assert cl == 3_600_000, cl
+    print("\nrecount checks passed: transmitted 1,440,000; prompt calls 3,600,000 (per model)")
 
     if args.csv:
         import csv

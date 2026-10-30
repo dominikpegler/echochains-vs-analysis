@@ -90,6 +90,25 @@ _TEMPLATES = {
         "stages": 1,
         "source": "locked 2026-10-30; restates the Perez single-turn task",
     },
+    "improve": {
+        "system": (
+            "You are a large language model. Given an input text, generate "
+            "several distinct improved versions of it that keep its meaning "
+            "and content but make the writing clearer, more fluent, and "
+            "better structured. Return ONLY valid JSON."
+        ),
+        "task_sentence": (
+            "Take the following text and generate {k} distinct improved "
+            "versions of it that keep its meaning and content but make the "
+            "writing clearer, more fluent, and better structured."
+        ),
+        "noun": "improved version",
+        "nouns": "improved versions",
+        "key": "improved_texts",
+        "stages": 1,
+        "source": "added to the confirmatory design 2026-10-30; restates the "
+        "registry's single-turn improve task",
+    },
     "expand": {
         "system": (
             "You are a large language model. Given an input text, generate "
