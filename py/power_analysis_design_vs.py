@@ -64,7 +64,14 @@ H = 200                # hops
 GENRES = 3             # genre cells in the seed corpus (equal proportion)
 ALPHA, POWER_Z = 0.05, 1.96 + 0.84   # two-sided alpha=.05, 80% power
 ARMS = {"direct": "direct", "vs": "vs_weighted"}
-DESIGNS = {"50x9": (50, 9), "75x6": (75, 6), "112x4": (112, 4), "150x3": (150, 3)}
+DESIGNS = {
+    "50x9": (50, 9),
+    "75x6": (75, 6),
+    "90x5": (90, 5),
+    "112x4": (112, 4),
+    "112x5": (112, 5),   # NOT budget-neutral: 560 chains, +24% budget
+    "150x3": (150, 3),
+}
 MU_TARGET_AXIS = "abstract_to_concrete"   # the pilot's strongest drift axis
 RESID_FRAC = 0.5    # ASSUMED share of endpoint variance that is within-chain noise
 N_HOPS_SLOPE = 200  # chains' hop series feeding the per-chain OLS slope
