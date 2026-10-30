@@ -20,6 +20,10 @@ on the Vienna cluster.
 
 Run:  python py/design_size_vs.py            (defaults = locked design)
       python py/design_size_vs.py --csv PATH (also write a CSV breakdown)
+
+Design basis: the 2026-10-30 power analysis (power_analysis_design_vs.py)
+picked 90 seeds x 5 chains over 50x9 / 75x6 / 112x4 (smaller genre-cell
+MDE at the same chain budget); 112x5 was rejected at +24% cost.
 """
 
 from __future__ import annotations
@@ -39,8 +43,10 @@ CALLS_PER_STAGE = {
     "vs_weighted": 1,
     "vs_argmax": 1,
 }
-SEEDS_PER_TASK = 50   # one shared sentence set serves paraphrase + take_inspiration
-CHAINS = 9
+SEEDS_PER_TASK = 90   # 90x5 lock (2026-10-30): 30 seeds per genre; shared sentence
+                      # set serves paraphrase + improve + take_inspiration
+CHAINS = 5            # budget-neutral with the earlier 50x9 candidate (450 chains per
+                      # condition per task), so totals and costs are unchanged
 HOPS = 200            # transmitted texts; the hop-0 seed is not transmitted
 PANEL_MODELS = 4      # Luna + Llama-3-8B + Qwen-27B + Gemma-27B (names TBD)
 VS_K = 5
