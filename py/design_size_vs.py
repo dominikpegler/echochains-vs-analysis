@@ -22,6 +22,11 @@ top-k and repetition penalties excluded everywhere. Only the temperature +
 top-p pair is set. Token estimates are unaffected (decode-dependent length
 differences are small relative to the current ASSUMED margins).
 
+DECODING RESOLUTION (2026-10-31, closed): the design keeps gpt-6-luna at the
+vendor default; the mixed decoding within the panel is accepted and gets
+declared in the prereg. gpt-5.6-luna is no longer referenced anywhere in the
+design; the panel anchor is gpt-6-luna (snapshot gpt-6-luna-2026-09-22).
+
 Token counts split into MEASURED (exploratory pilot, vs_weighted logs,
 2026-10-30 session) and ASSUMED. The ASSUMED entries are the dominant
 uncertainty: expand+compress runs on the 100-200-word long-text band, which
@@ -31,11 +36,13 @@ the pilot never ran. The planned small long-text pilot replaces them; the
 on fixture seeds, so treat the expand+compress USD column as a conservative
 overestimate.
 
-Prices: gpt-6-luna list prices UNKNOWN as of 2026-10-31 (the published
-0.20/1.20 USD per M belong to gpt-5.6-luna; kept as placeholders ONLY until
-the portal check). The Azure global-batch discount is ASSUMED at 50% and
-must be verified before the budget line is quoted. Only the luna runs cost
-API money; the open-weight panel models run on the Vienna cluster.
+Prices: gpt-6-luna list prices $0.10 input / $0.50 output per M tokens
+(published Standard tier VERIFIED 2026-10-31 against multiple trackers;
+batch $0.05/$0.25, a flat 50% cut). These are the OpenAI rate-card prices;
+parity on the Azure foundry-dompeg portal still needs the one-time check.
+The Azure global-batch discount is ASSUMED at 50% and must be verified
+before the budget line is quoted. Only the luna runs cost API money; the
+open-weight panel models run on the Vienna cluster.
 
 Run:  python py/design_size_vs.py            (defaults = locked design)
       python py/design_size_vs.py --csv PATH (also write a CSV breakdown)
@@ -116,10 +123,11 @@ TASK_BAND = {
 }
 
 # --- prices -------------------------------------------------------------------
-# gpt-6-luna list prices are UNKNOWN (2026-10-31): the constants below are the
-# gpt-5.6-luna prices kept as placeholders until the Azure portal check.
-LUNA_IN_PRICE = 0.20    # USD per M tokens, PLACEHOLDER (gpt-5.6-luna value)
-LUNA_OUT_PRICE = 1.20   # USD per M tokens, PLACEHOLDER (gpt-5.6-luna value)
+# gpt-6-luna published rate-card prices (VERIFIED 2026-10-31 against several
+# trackers: $0.10/$0.50 list, batch $0.05/$0.25); the Azure portal parity check
+# is still pending, so the constants below remain until that check.
+LUNA_IN_PRICE = 0.10    # USD per M tokens, list (OpenAI rate card)
+LUNA_OUT_PRICE = 0.50   # USD per M tokens, list (OpenAI rate card)
 BATCH_DISCOUNT = 0.50   # ASSUMED; verify the Azure global-batch discount
 USD_PER_EUR = 0.92      # ASSUMED conversion
 
@@ -203,10 +211,10 @@ def main() -> None:
     print(f"\nPanel: {PANEL_MODELS} models -> transmitted {tr*PANEL_MODELS:,}, "
           f"prompt calls {cl*PANEL_MODELS:,}. Only gpt-6-luna is billed; the "
           f"open-weight models run on the Vienna cluster.")
-    print(f"gpt-6-luna list (PLACEHOLDER gpt-5.6 prices): {usd:,.0f} USD ~ "
+    print(f"gpt-6-luna list (rate card): {usd:,.0f} USD ~ "
           f"{usd*USD_PER_EUR:,.0f} EUR; with batch x{BATCH_DISCOUNT}: "
-          f"{usd*BATCH_DISCOUNT*USD_PER_EUR:,.0f} EUR (prices UNKNOWN: verify "
-          f"in the portal; discount ASSUMED, verify with Azure).")
+          f"{usd*BATCH_DISCOUNT*USD_PER_EUR:,.0f} EUR (Azure portal parity "
+          f"pending; discount ASSUMED, verify with Azure).")
     print(f"\nCost share expand+compress: "
           f"{sum(r['usd'] for r in rows if r['task']=='expand+compress')/usd:.0%} "
           f"(dominated by ASSUMED long-text VS response lengths).")
