@@ -58,7 +58,7 @@ import nltk
 from echochain.diffusion import AXES, sigma_axis_position
 from echochain.utils import get_data_dir
 from echochain.icc_utils import compute_icc
-from echochain.plot_utils import ci95
+from echochain.plot_utils import ci95, ci95_seed
 from echochain.constants import CONDITION_COLORS, CONDITION_LABELS
 
 import pub_utils.figures as F
@@ -246,9 +246,16 @@ def last_hop_summary(df_one_cfg):
     d = df_one_cfg.loc[idx].copy()
     rows = []
     for m, g in d.groupby("metric"):
-        mean, h95 = ci95(g["value"].values)
+        mean, h95, n_seeds = ci95_seed(g["value"].values, g["msg_id"].values)
         rows.append(
-            dict(metric=m, mean=mean, ci_lo=mean - h95, ci_hi=mean + h95, N=len(g))
+            dict(
+                metric=m,
+                mean=mean,
+                ci_lo=mean - h95,
+                ci_hi=mean + h95,
+                N=len(g),
+                n_seeds=n_seeds,
+            )
         )
     out = pd.DataFrame(rows).set_index("metric").reindex(KEY_METRICS).reset_index()
     return out
@@ -468,11 +475,16 @@ def write_icc_table(df_cum, model, configs, pub_dir, condition_label, condition)
 
 
 def metric_mean_ci_at_last(df, metric):
-    idx = df[df["metric"] == metric].groupby(["msg_id", "chain"])["hop"].idxmax()
-    vals = df.loc[idx, "value"].values
-    mu, h = ci95(vals)
+    d = df[df["metric"] == metric]
+    idx = d.groupby(["msg_id", "chain"])["hop"].idxmax()
+    dd = d.loc[idx]
+    mu, h, n_seeds = ci95_seed(dd["value"].values, dd["msg_id"].values)
     return dict(
-        mean=float(mu), ci_lo=float(mu - h), ci_hi=float(mu + h), N=int(len(vals))
+        mean=float(mu),
+        ci_lo=float(mu - h),
+        ci_hi=float(mu + h),
+        N=int(len(dd)),
+        n_seeds=int(n_seeds),
     )
 
 
@@ -632,7 +644,7 @@ def process_condition(condition):
     s = {}
     stacked = df_cum[(df_cum["config"] == CONFIG) & (df_cum["model"].isin(models))]
     s["stacked"] = stacked[stacked["metric"].isin(STACKED_METRICS)][
-        ["metric", "hop", "value"]
+        ["metric", "msg_id", "hop", "value"]
     ].copy()
     s["overlay"] = (
         stacked[stacked["metric"].isin(OVERLAY_PLOT_METRICS)]
@@ -731,12 +743,12 @@ def plot_measure_row(
         hops = sorted(df_layer["hop"].unique().tolist())
         xs, mu, lo, hi = [], [], [], []
         for h in hops:
-            vals = df_layer[(df_layer["hop"] == h) & (df_layer["metric"] == measure)][
-                "value"
-            ].tolist()
-            if not vals:
+            vals = df_layer[(df_layer["hop"] == h) & (df_layer["metric"] == measure)]
+            if vals.empty:
                 continue
-            mean, h95 = ci95(vals)
+            mean, h95, _ = ci95_seed(
+                vals["value"].values, vals["msg_id"].values
+            )
             xs.append(h)
             mu.append(mean)
             lo.append(mean - h95)
@@ -1116,14 +1128,45 @@ def _mu_by_config(condition):
     s = summaries[condition]["drift_slopes"]
     rows = []
     for cfg, grp in s.groupby("config"):
-        # mean of the absolute per-axis slopes, averaged over chains:
-        # this reproduces the manuscript's mean absolute drift summary
-        per_chain_abs = grp[AXES].abs().mean(axis=1)
-        rows.append({"config": cfg, "mean_abs": per_chain_abs.mean()})
+        # headline estimand per config, as in drift_summary: the signed
+        # per-axis slopes are averaged across chains first; the absolute
+        # value is taken after averaging, then the five axis values are
+        # averaged (aggregate direction, not per-chain magnitude).
+        mu_cfg = grp[AXES].mean()
+        rows.append({"config": cfg, "mean_abs": float(mu_cfg.abs().mean())})
     rows = (
         pd.DataFrame(rows).set_index("config").reindex(configs)["mean_abs"].to_numpy()
     )
     return rows
+
+
+def mu_direction(slopes):
+    """Per-seed x config sign counts of the per-axis drift slopes.
+
+    One unit per (config, msg_id); the unit slope is the signed mean of
+    the unit's per-chain slopes (aggregation consistent with the headline
+    drift_summary); counted is the number of units with a negative unit
+    slope. 450 units in the pilot (50 seeds x 9 configs), 9 chains each.
+    """
+    unit = slopes.groupby(["config", "msg_id"], sort=True)[AXES].mean()
+    return {
+        ax: {"neg_units": int((unit[ax] < 0).sum()), "n_units": int(len(unit))}
+        for ax in AXES
+    }
+
+
+def mu_by_config(slopes):
+    """Headline mean absolute drift per decoding config.
+
+    Same aggregation as drift_summary, restricted to each config: the
+    signed per-axis slopes are averaged across the config's chains, the
+    absolute value is taken after averaging, and the five axis values are
+    averaged.
+    """
+    return {
+        cfg: float(grp[AXES].mean().abs().mean())
+        for cfg, grp in slopes.groupby("config")
+    }
 
 
 # 5.4.2. Fidelity by config: last-hop cosine and seed->hop entailment
@@ -1453,6 +1496,14 @@ examples_section["length_shrink"] = {
 exploratory_section = {
     "sigma_by_config": sigma_by_config,
     "sigma_ratio_by_config": _minmax(ratio_by_config),
+    "mu_direction": {
+        condition: mu_direction(summaries[condition]["drift_slopes"])
+        for condition in CONDITIONS
+    },
+    "mu_by_config": {
+        condition: mu_by_config(summaries[condition]["drift_slopes"])
+        for condition in CONDITIONS
+    },
     "delta_len_by_config": {
         condition: _minmax(summaries[condition]["last_hop_by_config"]["delta_len"])
         for condition in CONDITIONS
