@@ -166,6 +166,88 @@ def user_template(task):
     return VS_TEMPLATES[task]["user"]
 
 
+# --- Control condition: joint candidate list WITHOUT probabilities ---------
+# Locked 2026-10-31 (user review). The "multiple candidates, uniform
+# selection" condition replaces the earlier five-separate-calls definition,
+# which transmitted the same distribution as Direct. Each control template
+# differs from its VS counterpart in EXACTLY two ways: the probability
+# gloss sentence and the probability fields in the sample entries are
+# absent; task instruction, JSON shape, input wrapper, and JSON key are
+# identical. H3 (VS minus this control) therefore tests probability
+# elicitation AND weighted selection together, not either component alone.
+
+_CONTROL = {
+    "paraphrase": {
+        "system": _TEMPLATES["paraphrase"]["system"],
+        "task_sentence": _TEMPLATES["paraphrase"]["task_sentence"],
+        "noun": "paraphrase",
+        "key": "paraphrases",
+    },
+    "improve": {
+        "system": _TEMPLATES["improve"]["system"],
+        "task_sentence": _TEMPLATES["improve"]["task_sentence"],
+        "noun": "improved version",
+        "key": "improved_texts",
+    },
+    "take_inspiration": {
+        "system": _TEMPLATES["take_inspiration"]["system"],
+        "task_sentence": _TEMPLATES["take_inspiration"]["task_sentence"],
+        "noun": "text",
+        "key": "new_texts",
+    },
+    "expand": {
+        "system": _TEMPLATES["expand"]["system"],
+        "task_sentence": _TEMPLATES["expand"]["task_sentence"],
+        "noun": "enriched version",
+        "key": "enriched_texts",
+    },
+    "compress": {
+        "system": _TEMPLATES["compress"]["system"],
+        "task_sentence": _TEMPLATES["compress"]["task_sentence"],
+        "noun": "shortened version",
+        "key": "shortened_texts",
+    },
+}
+
+_LIST_ONLY_GLOSS = (
+    "Return ONLY JSON in exactly this format:\n"
+    "{{\n"
+    '  "@KEY@": [\n'
+    '    {{"text": "first @NOUN@"}},\n'
+    '    {{"text": "second @NOUN@"}}\n'
+    "  ]\n"
+    "}}\n"
+    "\n"
+    'Input text:\n"""{text_in}"""'
+)
+
+CONTROL_TEMPLATES = {
+    name: {
+        "system": spec["system"],
+        "user": (
+            spec["task_sentence"].format_map(dict(k="{k}"))
+            + "\n\n"
+            + _LIST_ONLY_GLOSS.replace("@KEY@", spec["key"]).replace(
+                "@NOUN@", spec["noun"]
+            )
+        ),
+        "key": spec["key"],
+        "source": "control condition, locked 2026-10-31; VS template without "
+        "probability elicitation",
+    }
+    for name, spec in _CONTROL.items()
+}
+
+
+def render_control(task, text_in, k=VS_K):
+    """Chat messages for one joint-list control call (no probabilities)."""
+    spec = CONTROL_TEMPLATES[task]
+    return [
+        {"role": "system", "content": spec["system"]},
+        {"role": "user", "content": spec["user"].format(k=k, text_in=text_in)},
+    ]
+
+
 def render(task, text_in, k=VS_K):
     """Chat messages for one VS candidate-elicitation call.
 
@@ -188,6 +270,12 @@ if __name__ == "__main__":
         print(f"user (k={VS_K}, text_in={sample!r}):\n")
         print(render(name, sample)[1]["content"])
         print("\n" + "-" * 72 + "\n")
+    for name, spec in CONTROL_TEMPLATES.items():
+        print(f"### control/{name} ({spec['source']})\n")
+        print(f"system:\n{spec['system']}\n")
+        print(f"user (k={VS_K}, text_in={sample!r}):\n")
+        print(render_control(name, sample)[1]["content"])
+        print("\n" + "-" * 72 + "\n")
     # Self-checks: slot preservation in the raw templates, slot resolution
     # after formatting, per-task JSON keys present exactly twice (header +
     # sample rows), and the paraphrase texts matching the pilot's literals.
@@ -208,4 +296,19 @@ if __name__ == "__main__":
         assert f'"{spec["key"]}"' in msg[1]["content"], name
         assert f"{VS_K} distinct" in msg[1]["content"], name
         assert sample in msg[1]["content"] and "{{" not in msg[1]["content"], name
-    print("self-checks passed for all", len(VS_TEMPLATES), "templates")
+    for name, spec in CONTROL_TEMPLATES.items():
+        raw = spec["user"]
+        assert "{k}" in raw and "{text_in}" in raw, name
+        assert "probability" not in raw.lower(), name
+        assert "@" not in raw, name
+        msg = render_control(name, sample)
+        assert len(msg) == 2
+        assert f'"{spec["key"]}"' in msg[1]["content"], name
+        assert "probability" not in msg[1]["content"].lower(), name
+        assert sample in msg[1]["content"] and "{{" not in msg[1]["content"], name
+        # matched structure: the system prompt is byte-identical to the VS
+        # counterpart's, and the task sentence is byte-identical too.
+        assert spec["system"] == VS_TEMPLATES[name]["system"], name
+        assert name in VS_TEMPLATES
+    print("self-checks passed for all", len(VS_TEMPLATES), "templates and",
+          len(CONTROL_TEMPLATES), "control templates")

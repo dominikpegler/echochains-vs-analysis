@@ -1,11 +1,17 @@
-"""Confirmatory design-size and cost model for the VS paper (4-task lock).
+"""Confirmatory design-size and cost model for the VS paper (3-condition lock).
 
 Recomputes transmitted texts, prompt calls, and API token spend from the
-locked design constants instead of hand arithmetic. The task set is the
-2026-10-30 lock plus the same-day addition of improve: paraphrase, improve,
-take inspiration, expand+compress ("continue" dropped, so no length cap
-applies). paraphrase, improve, and take inspiration share the one
-50-sentence seed set; expand+compress runs on the long-text band.
+design constants instead of hand arithmetic. The task set is the
+2026-10-30 lock: paraphrase, improve, take inspiration, expand+compress
+("continue" dropped, so no length cap applies). paraphrase, improve, and
+take inspiration share the one 90-sentence seed set; expand+compress runs
+on the long-text band. The conditions are the 2026-10-31 lock: Direct, the
+joint-list uniform control (ONE call that generates k distinct candidates
+WITHOUT probabilities; replaces the earlier five-separate-calls Multi-k
+definition, whose transmitted distribution duplicates Direct), and VS
+(probabilities, weight-sampled selection). Verbalized mode was dropped
+from the confirmatory design for economy; no selection-rule hypothesis
+(old H4) is preregistered.
 
 Token counts split into MEASURED (exploratory pilot, vs_weighted logs,
 2026-10-30 session) and ASSUMED. The ASSUMED entries are the dominant
@@ -21,9 +27,10 @@ on the Vienna cluster.
 Run:  python py/design_size_vs.py            (defaults = locked design)
       python py/design_size_vs.py --csv PATH (also write a CSV breakdown)
 
-Design basis: the 2026-10-30 power analysis (power_analysis_design_vs.py)
-picked 90 seeds x 5 chains over 50x9 / 75x6 / 112x4 (smaller genre-cell
-MDE at the same chain budget); 112x5 was rejected at +24% cost.
+Design basis: the user picked 90 seeds x 5 chains from the design comparison
+(50x9 / 75x6 / 112x4 / 112x5 / 150x3). The power notebook is being rebuilt
+against the final tests and the revised condition set, so treat the power
+basis as provisional until the 2026-10-31 plan's step 4 is done.
 """
 
 from __future__ import annotations
@@ -31,17 +38,18 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 
-# --- design constants (2026-10-30 lock) ------------------------------------
+# --- design constants (2026-10-30/31 locks) ---------------------------------
 TASKS = ("paraphrase", "improve", "take_inspiration", "expand+compress")
-CONDITIONS = ("direct", "multi_k_uniform", "vs_weighted", "vs_argmax")
-# Prompt calls per hop stage under each condition. Multi-k uniform sends k
-# separate task-prompt calls per hop (the paper's definition); the VS calls
-# elicit k candidates in ONE call, so they also send one call per stage.
+CONDITIONS = ("direct", "uniform_list", "vs_weighted")
+# Prompt calls per hop stage: EVERY condition now sends ONE call per stage.
+# The uniform_list control elicits k candidates jointly (no probabilities);
+# the VS call elicits k candidates with probabilities. Selection happens
+# after each call (uniform for the control; proportional to the normalized
+# verbalized probabilities for VS).
 CALLS_PER_STAGE = {
     "direct": 1,
-    "multi_k_uniform": 5,
+    "uniform_list": 1,
     "vs_weighted": 1,
-    "vs_argmax": 1,
 }
 SEEDS_PER_TASK = 90   # 90x5 lock (2026-10-30): 30 seeds per genre; shared sentence
                       # set serves paraphrase + improve + take_inspiration
@@ -55,6 +63,9 @@ VS_K = 5
 SEED_TOKENS = {"sentence": 30, "long": 200}   # ASSUMED midpoints of 10-40 and 100-200 words
 VS_INSTR_BLOCK = 175   # MEASURED: VS input 205 minus a ~30-token seed (incl. system + JSON spec)
 JSON_OVERHEAD = 75     # MEASURED calibration: 245 vs output = 5 x 34 + 75
+UNIF_INSTR_BLOCK = 160  # ASSUMED: the control template matches the VS template
+                        # minus the probability gloss and normalization text
+UNIF_JSON_OVERHEAD = 30  # ASSUMED: list-only JSON (no probabilities) vs VS's 75
 
 @dataclass
 class Stage:
@@ -98,12 +109,25 @@ USD_PER_EUR = 0.92      # ASSUMED conversion
 
 # --- model ----------------------------------------------------------------------
 def stage_call_tokens(stage: Stage, band: str, condition: str) -> tuple[int, int]:
-    """(input, output) tokens for ONE call of this stage under this condition."""
+    """(input, output) tokens for ONE call of this stage under this condition.
+
+    direct: plain task prompt, single response. uniform_list: one joint call
+    requesting k distinct candidates in a list-only JSON (input block = VS's
+    minus the probability boilerplate; output = k candidate texts plus a
+    smaller JSON overhead). vs_weighted: the measured VS call (input block
+    with probability spec; output = k candidate texts plus the measured JSON
+    overhead).
+    """
     seed = SEED_TOKENS[band]
-    is_vs = condition.startswith("vs_")
-    inp = (VS_INSTR_BLOCK if is_vs else stage.instr_tokens) + seed
-    out = stage.out_tokens * VS_K + JSON_OVERHEAD if is_vs else stage.out_tokens
-    return inp, out
+    if condition == "direct":
+        return stage.instr_tokens + seed, stage.out_tokens
+    if condition == "uniform_list":
+        return (UNIF_INSTR_BLOCK + seed,
+                stage.out_tokens * VS_K + UNIF_JSON_OVERHEAD)
+    if condition == "vs_weighted":
+        return (VS_INSTR_BLOCK + seed,
+                stage.out_tokens * VS_K + JSON_OVERHEAD)
+    raise ValueError(f"unknown condition: {condition}")
 
 
 def design_rows() -> list[dict]:
@@ -170,11 +194,12 @@ def main() -> None:
           f"{sum(r['usd'] for r in rows if r['task']=='expand+compress')/usd:.0%} "
           f"(dominated by ASSUMED long-text VS response lengths).")
 
-    # Locked-recount checks (handoff 2026-10-30): 1,440,000 transmitted and
-    # 3,600,000 prompt calls per model for the 4-task design.
-    assert tr == 1_440_000, tr
-    assert cl == 3_600_000, cl
-    print("\nrecount checks passed: transmitted 1,440,000; prompt calls 3,600,000 (per model)")
+    # Locked-recount checks (handoff 2026-10-31): 1,080,000 transmitted and
+    # 1,350,000 prompt calls per model for the 3-condition 4-task design
+    # (3 x 4 x 90 x 5 x 200 texts; one call per stage in every condition).
+    assert tr == 1_080_000, tr
+    assert cl == 1_350_000, cl
+    print("\nrecount checks passed: transmitted 1,080,000; prompt calls 1,350,000 (per model)")
 
     if args.csv:
         import csv
