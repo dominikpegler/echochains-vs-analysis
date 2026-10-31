@@ -31,11 +31,12 @@ import tasks_registry  # noqa: E402
 # ---------------------------------------------------------------------------
 
 class FakeCall:
-    def __init__(self, model, messages, temperature, top_p, random_seed):
+    def __init__(self, model, messages, decoding, random_seed):
         self.model = model
         self.messages = messages
-        self.temperature = temperature
-        self.top_p = top_p
+        self.decoding = dict(decoding)
+        self.temperature = self.decoding.get("temperature")
+        self.top_p = self.decoding.get("top_p")
         self.random_seed = random_seed
 
 
@@ -49,9 +50,9 @@ class FakeBackend:
         self.calls: list[FakeCall] = []
         self.model_version = model_version
 
-    def call(self, model, messages, temperature, top_p, random_seed):
+    def call(self, model, messages, decoding, random_seed):
         self.calls.append(FakeCall(model, [dict(m) for m in messages],
-                                   temperature, top_p, random_seed))
+                                   decoding, random_seed))
         if not self.responses:
             raise AssertionError("unexpected extra API call; queue exhausted")
         item = self.responses.pop(0)
@@ -180,10 +181,24 @@ def test_prompt_templates_intact():
 # ---------------------------------------------------------------------------
 
 def _assert_decoding(case):
+    """Default runners use the locked decoding {0.8, 0.5}."""
     for call in case.backend.calls:
         assert call.temperature == 0.8
         assert call.top_p == 0.5
         assert isinstance(call.random_seed, int) and call.random_seed > 0
+
+
+def test_default_decoding_omits_parameters():
+    """--decoding default sends NO sampling parameters (gpt-6-luna)."""
+    case = make_case(responses=["out"], task="paraphrase", condition="direct",
+                     hops=1)
+    case.runner.decoding = {}
+    case.run()
+    call = case.backend.calls[0]
+    assert call.temperature is None and call.top_p is None
+    log = case.log()
+    assert log[0]["temperature"] is None and log[0]["top_p"] is None
+    assert log[1]["temperature"] is None and log[1]["top_p"] is None
 
 
 def test_direct_message_shapes():
@@ -263,6 +278,8 @@ def test_joint_control_message_shapes():
             entry = case.log()[1]
             assert entry["text"].startswith("variant ")
             assert 0 <= entry["selected_index"] <= 4
+            # no VS-specific deviations may leak into the control condition
+            assert entry["deviations"] == []
             for cand in entry["candidates"]:
                 assert set(cand) == {"text"}
 
@@ -734,6 +751,7 @@ TESTS = [
     test_seed_schema_validation,
     test_band_mismatch_rejected,
     test_run_cell_single_stage_end_to_end,
+    test_default_decoding_omits_parameters,
     test_qc_inspect_cell,
     test_qc_clean_cell_exits_zero,
 ]

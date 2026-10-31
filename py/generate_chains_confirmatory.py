@@ -3,8 +3,14 @@
 Runs the locked three-condition design (Direct, uniform-list joint control,
 verbalized sampling) x four tasks (paraphrase, improve, take inspiration,
 expand+compress) with 90 seeds x 5 chains x 200 transmitted hops per
-task-per-condition cell. Decoding is fixed at temperature 0.8 / top-p 0.5.
-The exploratory pilot script `generate_chains_vs.py` stays untouched as the
+task-per-condition cell. The locked decoding is temperature 0.8 / top-p 0.5
+(--decoding locked); models that expose no sampling parameters (gpt-6-luna on
+Azure, verified 2026-10-31: temperature != 1 is an unsupported value and top_p
+is an unsupported parameter on chat.completions AND the Responses API,
+api-versions 2024-12-01-preview and 2025-04-01-preview) run with
+--decoding default, which sends no sampling arguments and records
+temperature: null / top_p: null / decoding: model_default in the logs. The
+exploratory pilot script `generate_chains_vs.py` stays untouched as the
 exploratory record.
 
 ONE call per hop stage. Direct sends its single-turn instruction and
@@ -118,6 +124,10 @@ TASK_BANDS = {
     "take_inspiration": "sentence",
     "expand+compress": "long",
 }
+DECODING = {"locked": {"temperature": 0.8, "top_p": 0.5},
+            "default": {}}  # gpt-6-luna supports NO sampling parameters;
+                            # validated 2026-10-31 (400 unsupported_value /
+                            # unsupported_parameter on both APIs)
 
 
 # ---------------------------------------------------------------------------
@@ -142,9 +152,9 @@ def make_seed(model: str, task: str, condition: str, stage_index: int,
 
 
 def cache_key(backend: str, model: str, messages: list[dict],
-              temperature: float, top_p: float, random_seed: int) -> str:
+              decoding: dict, random_seed: int) -> str:
     payload = json.dumps(
-        [backend, model, messages, temperature, top_p, random_seed],
+        [backend, model, messages, dict(decoding), random_seed],
         sort_keys=True, ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -206,11 +216,11 @@ class AzureBackend:
             azure_endpoint=os.environ["AZURE_ENDPOINT"],
         )
 
-    def call(self, model: str, messages, temperature: float, top_p: float,
+    def call(self, model: str, messages, decoding: dict,
              random_seed: int) -> CallResult:
         resp = self.client.chat.completions.create(
             model=model, messages=messages, seed=random_seed,
-            temperature=temperature, top_p=top_p,
+            **decoding,
         )
         return CallResult(
             text=resp.choices[0].message.content.strip(),
@@ -234,11 +244,11 @@ class CompatibleBackend:
             base_url=os.environ["OPENAI_BASE_URL"],
         )
 
-    def call(self, model: str, messages, temperature: float, top_p: float,
+    def call(self, model: str, messages, decoding: dict,
              random_seed: int) -> CallResult:
         resp = self.client.chat.completions.create(
             model=model, messages=messages, seed=random_seed,
-            temperature=temperature, top_p=top_p,
+            **decoding,
         )
         return CallResult(
             text=resp.choices[0].message.content.strip(),
@@ -404,12 +414,14 @@ def run_stage_call(backend, cache: CallCache, cell: CellState, *, model: str,
                    task: str, condition: str, stage_name: str,
                    stage_index: int, text_in: str, seed_id: int,
                    chain_id: int, hop_id: int, replicate: int = 0,
-                   k: int = vs_task_prompts.VS_K) -> dict:
+                   k: int = vs_task_prompts.VS_K,
+                   decoding: dict | None = None) -> dict:
     """One API call for one hop stage, with cache, retries, and logging.
 
     Returns the stage's log record (see the module docstring). Raises
     CellPaused when a stage fails fatally or the cell pauses.
     """
+    decoding = DECODING["locked"] if decoding is None else dict(decoding)
     if not text_in or not text_in.strip():
         raise CellPaused(f"empty input text at seed {seed_id} chain {chain_id} "
                          f"hop {hop_id} stage {stage_name}")
@@ -417,8 +429,7 @@ def run_stage_call(backend, cache: CallCache, cell: CellState, *, model: str,
                               text_in)
     random_seed = make_seed(model, task, condition, stage_index, seed_id,
                             chain_id, hop_id, replicate)
-    ck = cache_key(backend.name, model, messages, TEMPERATURE, TOP_P,
-                   random_seed)
+    ck = cache_key(backend.name, model, messages, decoding, random_seed)
     joint = condition != "direct"
     key = vs_task_prompts.VS_TEMPLATES[stage_name]["key"] if joint else None
 
@@ -442,8 +453,7 @@ def run_stage_call(backend, cache: CallCache, cell: CellState, *, model: str,
             from_cache = True
         else:
             try:
-                fresh = backend.call(model, messages, TEMPERATURE, TOP_P,
-                                     random_seed)
+                fresh = backend.call(model, messages, decoding, random_seed)
             except Exception as exc:
                 last_error = exc
                 if attempt < cell.max_retries:
@@ -472,7 +482,9 @@ def run_stage_call(backend, cache: CallCache, cell: CellState, *, model: str,
             if "wrong_count" in parse_devs:
                 parse_devs.append("accepted_wrong_count")
             deviations.extend(parse_devs)
-            probabilities = normalize_probabilities(candidates, deviations)
+            if condition == "vs_weighted":
+                probabilities = normalize_probabilities(candidates,
+                                                        deviations)
             rng = random.Random(random_seed)
             selected_index = select_index(candidates, condition, rng,
                                           probabilities, deviations)
@@ -484,7 +496,7 @@ def run_stage_call(backend, cache: CallCache, cell: CellState, *, model: str,
             "candidates": candidates, "selected_index": selected_index,
             "probabilities_normalized": probabilities, "text_out": text_out,
             "attempts": attempt, "deviations": deviations,
-            "from_cache": from_cache,
+            "from_cache": from_cache, "decoding": decoding,
         }
         # cache the response only once its parse is accepted, so resume never
         # reproduces a malformed or previously rejected response
@@ -510,6 +522,7 @@ def run_stage_call(backend, cache: CallCache, cell: CellState, *, model: str,
         "deviations": accepted["deviations"],
         "from_cache": accepted["from_cache"],
         "usage": accepted["usage"],
+        "decoding": accepted["decoding"] or "model_default",
     }
     return record
 
@@ -522,7 +535,8 @@ class ChainRunner:
                  chains: int = 5, hops: int = 200, replicate: int = 0,
                  partial_flush_every: int = 25,
                  max_retries: int = 3,
-                 vs_k: int = vs_task_prompts.VS_K):
+                 vs_k: int = vs_task_prompts.VS_K,
+                 decoding: dict | None = None):
         self.backend = backend
         self.model = model
         self.task = task
@@ -538,6 +552,8 @@ class ChainRunner:
         self.partial_flush_every = partial_flush_every
         self.max_retries = max_retries
         self.vs_k = vs_k
+        self.decoding = DECODING["locked"] if decoding is None \
+            else dict(decoding)
         self.cell = CellState(max_retries=max_retries)
 
     # -- helpers ------------------------------------------------------------
@@ -579,7 +595,8 @@ class ChainRunner:
                 "condition": self.condition, "seed_id": seed_id,
                 "band": self.band, "genre": seed.get("genre"),
                 "model": self.model, "backend": self.backend.name,
-                "temperature": TEMPERATURE, "top_p": TOP_P,
+                "temperature": self.decoding.get("temperature"),
+                "top_p": self.decoding.get("top_p"),
             }]
         composite = self.task == "expand+compress"
         for hop_id in range(1, self.hops + 1):
@@ -613,7 +630,8 @@ class ChainRunner:
                     task=self.task, condition=self.condition,
                     stage_name=stage_name, stage_index=stage_index,
                     text_in=text_in, seed_id=seed_id, chain_id=chain_id,
-                    hop_id=hop_id, replicate=self.replicate, k=self.vs_k)
+                    hop_id=hop_id, replicate=self.replicate, k=self.vs_k,
+                    decoding=self.decoding)
             except CellPaused as exc:
                 self._pause(seed_id, chain_id, hop_id, stage_name, str(exc))
             stage_records.append(record)
@@ -631,7 +649,8 @@ class ChainRunner:
             "text": last["text_out"],
             "random_seed": last["random_seed"],
             "model": self.model, "model_version": last["model_version"],
-            "temperature": TEMPERATURE, "top_p": TOP_P,
+            "temperature": self.decoding.get("temperature"),
+            "top_p": self.decoding.get("top_p"),
             "raw_response": last["raw_response"],
             "candidates": last["candidates"],
             "selected_index": last["selected_index"],
@@ -721,7 +740,8 @@ def run_cell(backend, *, model: str, task: str, condition: str, band: str,
              seeds: list[dict], logs_root: Path, cache_root: Path,
              chains: int, hops: int, replicate: int, partial_flush_every: int,
              max_retries: int, limit_seeds: int | None,
-             limit_chains: int | None, limit_hops: int | None) -> None:
+             limit_chains: int | None, limit_hops: int | None,
+             decoding: dict | None = None) -> None:
     expected = TASK_BANDS[task]
     if band != expected:
         raise ValueError(f"seed band {band!r} does not match task {task!r}'s "
@@ -734,6 +754,7 @@ def run_cell(backend, *, model: str, task: str, condition: str, band: str,
         out_dir=cell_out_dir(logs_root, model, task, condition),
         cache=cache, chains=chains, hops=hops, replicate=replicate,
         partial_flush_every=partial_flush_every, max_retries=max_retries,
+        decoding=decoding,
     )
     print(f"=== {task} / {condition} ===")
     runner.run(limit_seeds=limit_seeds, limit_chains=limit_chains,
@@ -761,6 +782,12 @@ def main(argv=None) -> int:
     parser.add_argument("--replicate", type=int, default=0)
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--partial-flush-every", type=int, default=25)
+    parser.add_argument("--decoding", choices=tuple(DECODING),
+                        default="locked",
+                        help="locked = temperature 0.8 / top-p 0.5 (the "
+                             "design lock); default = no sampling parameters "
+                             "(gpt-6-luna accepts none; recorded as "
+                             "model_default in the logs)")
     parser.add_argument("--limit-seeds", type=int)
     parser.add_argument("--limit-chains", type=int)
     parser.add_argument("--limit-hops", type=int)
@@ -808,7 +835,8 @@ def main(argv=None) -> int:
                      max_retries=args.max_retries,
                      limit_seeds=args.limit_seeds,
                      limit_chains=args.limit_chains,
-                     limit_hops=args.limit_hops)
+                     limit_hops=args.limit_hops,
+                     decoding=DECODING[args.decoding])
     except CellPaused as exc:
         # pause-and-inspect: the marker file documents the failing position;
         # rerunning the same command resumes from cache and chain logs.

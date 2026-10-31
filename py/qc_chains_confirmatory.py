@@ -119,21 +119,23 @@ def inspect_cell(cell_dir: Path, task: str, condition: str, *, hops: int,
 
 
 def run_nli_floor(report: dict, floor: float) -> dict:
-    """Score hop-1 NLI (seed -> hop) and add the floor flags to the report."""
-    from echochain.metrics_utils import nli_directional_probs
+    """Score hop-1 NLI (seed -> hop) and add the floor flags to the report.
+
+    Uses echochain.metrics_utils.entailment_consistency (DeBERTa-large-MNLI),
+    the pilot's measure: entail_a_to_b = the seed entails the hop.
+    """
+    from echochain.metrics_utils import entailment_consistency
     flagged = []
-    scored = []
     for sample in report["hop1_samples_for_nli"]:
-        probs = nli_directional_probs(sample["seed_text"], sample["text"])
-        ab = probs["entail"]
-        scored.append({"file": sample["file"],
-                       "entail_ab": round(ab, 6), "entail_ba": round(probs["entail_ba"], 6)})
+        ec = entailment_consistency(sample["seed_text"], sample["text"])
+        ab = ec["entail_a_to_b"]
         if ab < floor:
             flagged.append({"file": sample["file"], "seed_id": sample["seed_id"],
-                            "chain": sample["chain"], "entail_ab": round(ab, 4)})
+                            "chain": sample["chain"],
+                            "entail_ab": round(ab, 4)})
     report["nli_floor"] = {
         "floor": floor,
-        "scored_hops": len(scored),
+        "scored_hops": len(report["hop1_samples_for_nli"]),
         "flagged_rerun_pairs": flagged,
     }
     return report
