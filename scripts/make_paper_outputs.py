@@ -252,8 +252,31 @@ def json_safe_key(cfg):
 # --- tables stage ----------------------------------------------------------
 
 
+def _assert_no_nan(df: pd.DataFrame, where: str) -> None:
+    """Raise if any cell is NaN; a silent NaN table is always a bug.
+
+    The last-hop tables NaN regression (fixed 2026-10-31) shipped NaN rows
+    into the PDF because nothing failed on them; this guard aborts instead.
+    """
+    num = df.select_dtypes(include=[np.number])
+    bad = num.isna()
+    if not bool(bad.to_numpy().any()):
+        return
+    rows = sorted({str(df.index[i]) for i in np.where(bad.any(axis=1))[0]})
+    cols = sorted(num.columns[bad.any(axis=0)])
+    shown = ", ".join(rows[:5]) + (" ..." if len(rows) > 5 else "")
+    raise ValueError(
+        f"NaN cells in table data for {where}: "
+        f"{int(bad.to_numpy().sum())} cell(s); rows {shown}; columns {cols}")
+
+
 def last_hop_summary(df_one_cfg):
-    idx = last_hop_idx(df_one_cfg)
+    # The long-format rows hold ONE ROW PER METRIC per (seed, chain, hop), so
+    # the last-hop index must be selected per metric as well; grouping only by
+    # (msg_id, chain) returned the delta_len row and NaN-filled every other
+    # metric in the last-hop tables (regression since the staged builder,
+    # 2026-10-31 fix).
+    idx = df_one_cfg.groupby(["msg_id", "chain", "metric"])["hop"].idxmax()
     d = df_one_cfg.loc[idx].copy()
     rows = []
     for m, g in d.groupby("metric"):
@@ -261,8 +284,10 @@ def last_hop_summary(df_one_cfg):
             g["value"].values, g["msg_id"].values)
         rows.append(dict(metric=m, mean=mean, ci_lo=mean - h95,
                          ci_hi=mean + h95, N=len(g), n_seeds=n_seeds))
-    return (pd.DataFrame(rows).set_index("metric")
-            .reindex(KEY_METRICS).reset_index())
+    out = (pd.DataFrame(rows).set_index("metric")
+           .reindex(KEY_METRICS).reset_index())
+    _assert_no_nan(out, "last_hop_summary")
+    return out
 
 
 def _lasthop_spec_head():
@@ -319,6 +344,7 @@ def write_combined_last_hop_table(df_cum, model, configs, pub_dir,
         fontsize_pt=(9, 11), use_index=True,
     )
     out = pub_dir / f"{fname}.tex"
+    _assert_no_nan(wide, fname)
     write_table(wide, out, spec)
     print("Wrote", out)
 
@@ -389,6 +415,7 @@ def write_icc_table(df_cum, model, configs, pub_dir, condition_label,
         post_latex=widen_icc_column,
     )
     out = pub_dir / f"tab_icc_{model_safe}_configs.tex"
+    _assert_no_nan(t, f"tab_icc_{model_safe}_configs")
     write_table(t, out, spec)
     print("Wrote", out)
 
@@ -413,7 +440,12 @@ def write_metrics_pub(df_cum, models, configs, pub_dir):
             d = df_cum[(df_cum["model"] == model) & (df_cum["config"] == cfg)]
             entry = {"sample": sample_sizes(d), "last_hop": {}}
             for m in KEY_METRICS:
-                entry["last_hop"][m] = metric_mean_ci_at_last(d, m)
+                lh = metric_mean_ci_at_last(d, m)
+                if not all(np.isfinite(lh[k]) for k in
+                           ("mean", "ci_lo", "ci_hi")):
+                    raise ValueError(
+                        f"non-finite last-hop values for {m} at {model}/{cfg}")
+                entry["last_hop"][m] = lh
             pub["per_model"][model_safe][cfg_safe] = entry
     out = pub_dir / "metrics_pub.json"
     with open(out, "w", encoding="utf-8") as f:
@@ -447,6 +479,7 @@ def sigma_and_mu_tables(summaries):
         use_tabularx=False, placement="htbp", use_siunitx=True,
         fontsize_pt=(9, 11), float_fmt="{:.4f}", use_index=False,
     )
+    _assert_no_nan(headline_tbl, "tab_sigma_headline")
     write_table(headline_tbl, out_dir / "tab_sigma_headline.tex", spec)
 
     per_axis = pd.DataFrame(
@@ -463,6 +496,7 @@ def sigma_and_mu_tables(summaries):
         use_tabularx=False, placement="htbp", use_siunitx=True,
         fontsize_pt=(9, 11), float_fmt="{:.4f}", use_index=False,
     )
+    _assert_no_nan(per_axis, "tab_sigma_per_axis")
     write_table(per_axis, out_dir / "tab_sigma_per_axis.tex", spec)
 
     mu_tbl = pd.DataFrame(
@@ -476,6 +510,7 @@ def sigma_and_mu_tables(summaries):
         use_tabularx=False, placement="htbp", use_siunitx=True,
         fontsize_pt=(9, 11), float_fmt="{:.5f}", use_index=False,
     )
+    _assert_no_nan(mu_tbl, "tab_mu_per_axis")
     write_table(mu_tbl, out_dir / "tab_mu_per_axis.tex", spec)
 
     sens_tbl = pd.DataFrame({
@@ -492,6 +527,7 @@ def sigma_and_mu_tables(summaries):
         use_tabularx=False, placement="htbp", use_siunitx=True,
         fontsize_pt=(9, 11), float_fmt="{:.4f}", use_index=False,
     )
+    _assert_no_nan(sens_tbl, "tab_sigma_sensitivity")
     write_table(sens_tbl, out_dir / "tab_sigma_sensitivity.tex", spec)
 
     print("Wrote sigma tables to", out_dir)
