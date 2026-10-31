@@ -26,48 +26,49 @@
 # ---
 
 # %% [markdown]
-# # How big does the study need to be?
+# # How much evidence can the confirmatory study produce?
 #
-# This notebook justifies the planned study size for the preregistration.
-# The planned design is 90 seed texts, 5 chains per text, and 200 hops per
-# chain, for each of four tasks and four conditions.
+# This notebook answers one question: if the confirmatory study runs at the
+# planned size, how often do the preregistered decision rules find the
+# pilot's effects, and how often do they raise a false alarm when no effect
+# is there? The planned size is 90 seed texts, 5 chains per text, and 200
+# transmitted hops per condition and task, for each model.
 #
-# **Is that enough for the two preregistered effects?**
+# The simulation works from the pilot's measured chains, not from invented
+# distributions. For one simulated study it resamples seed texts from the
+# pilot's 50 with repetition, and for each resampled seed it draws the
+# study's 5 chains with repetition from that seed's 9 measured pilot
+# chains. Resampling seeds stands in for the wider population of texts;
+# drawing chains carries the measurement noise of a 5-chain spread, which a
+# variance rule alone would get wrong where chain endings repeat or cluster.
+# The arms of a simulated study use independent chain draws, as they do in
+# the real study, and stay paired through the same seed texts.
 #
-# The first prediction: verbalized sampling (VS), the practice of asking a
-# model for several candidate texts with stated probabilities, keeps chains
-# diverse (measured as the variance of the last hops). In the pilot, the
-# variance under VS was 8.5 times the variance under Direct. The second
-# prediction: VS transmits less of what the seed said (measured as the
-# similarity of the last hop to the seed text).
-#
-# We answer the question by simulation in three steps. 
-# 1. We take the variance of the 50 pilot texts as the best available guess for how much texts really differ.
-# 2. We note that measuring a spread with 5 chains gives an imperfect estimate, and that the size of this imperfection follows a known statistical rule, which we use directly.
-# 3. We pretend to run the planned study many times, and we count how often it would find a difference that is really there.
-#
-# The short answer: the planned design finds the pilot-sized diversity
-# effect in essentially every simulated run, even when we look at one kind
-# of text alone. It would still find, with a nine in ten chance, a diversity
-# effect more than five times weaker than the one the pilot measured. The
-# similarity effect is found just as easily. We checked smaller designs at
-# the same total workload, and they find weaker effects less often, not
-# more.
+# Three limits define what the answers mean. First, the pilot covers one
+# small model and the paraphrase task; other models and tasks are covered
+# by labeled scenario copies of the same pools, never by invented numbers.
+# Second, the Multi-k uniform control has no pilot data at all; its
+# assumptions are stated as labeled scenarios. Third, the preregistered
+# estimators and decision rules are simulated as the spec table in the
+# Analysis section defines them, so the reported chances apply to those
+# rules as written, for a pilot-like population. Every pass rate comes from
+# 2,000 simulated studies; at this count, chance moves the printed
+# percentages by about one point.
 
 # %%
-import json
 import math
+import os
+from collections import defaultdict
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 DATA_DIR = Path(
-    __import__("os").environ.get(
-        "DATA_DIR", str(Path.home() / "Dropbox/data_export/echo-chains")
-    )
-)
+    os.environ.get("DATA_DIR",
+                   str(Path.home() / "Dropbox/data_export/echochains")))
+STATS = DATA_DIR / "data" / "echodrift_stats"
 AXES = [
     "valence_neg_to_pos",
     "tone_neutral_to_intense",
@@ -75,405 +76,660 @@ AXES = [
     "factual_to_narrative",
     "abstract_to_concrete",
 ]
+IA, IF = 3, 4      # preregistered H2b axes: abstract-to-concrete,
+                   # factual-to-narrative
+CONFIG = "temp0.8_topp0.5"
+BOUND = 0.005      # equivalence bound, axis units per hop
+DESIGNS = [(50, 9), (75, 6), (90, 5), (112, 4), (112, 5), (150, 3)]
+LAMBDAS = [0.0, 0.5, 1.0]   # effect strength: 0 none, 1 pilot-sized
+B = 2000           # simulated studies per cell
+SEED = 20261031
+ALPHA = 0.05       # Benjamini-Hochberg false discovery rate
 
 # %% [markdown]
-# ## The measure
+# ## Pilot pools
 #
-# A transmission chain starts from one seed text and retells it 200 times.
-# Each retelling is one hop. At the end of a chain we score the final text on
-# five semantic scales, for example how factual or how narrative the language
-# reads. For one seed text, the chains do not all end in the same place. The
-# spread of their endings is the variance of these scores across the chains
-# of that seed, averaged over the five scales. A larger spread means the
-# chains stayed more diverse.
-#
-# The preregistered comparison is simple. Run several chains on the same
-# seed under Direct prompting, and run several more under VS. Compare the
-# two spreads on the same seed. A real effect means the VS spread is larger,
-# on the same texts, again and again.
+# Per chain, the simulation uses four pilot quantities, all at the primary
+# decoding setting (temperature 0.8, top-p 0.5): the axis score at hop 200,
+# the OLS slope of each axis score on hop index, the last-hop cosine, and
+# the two directional entailment scores. Direct and VS contribute their
+# arms; the verbalized mode contributes nothing, because the confirmatory
+# study does not collect it.
 
 # %%
-def load_seed_spreads(rel_path):
-    """Per seed, one variance value per scale. Shape: (50 seed texts, 5 scales).
+def load_axis(rel):
+    cols = ["config", "msg_id", "chain", "hop"] + AXES
+    return pd.read_csv(STATS / rel, usecols=cols)
 
-    The pilot recorded the spread of each seed in each of nine decoding
-    settings. We average over the settings, as the confirmatory study fixes
-    one setting. The values are variances.
+
+def chain_slopes(df):
+    """Per (config, seed, chain): OLS slope of each axis score on hop index.
+
+    Centered least squares; each chain is fitted over the rows it has (a
+    crash-truncated chain stops one hop early).
     """
-    fp = DATA_DIR / "data" / "echodrift_stats" / rel_path
-    df = pd.read_csv(fp)
-    per_seed = df.groupby("msg_id")[AXES].mean()
-    return per_seed[AXES].to_numpy()
+    base = ["config", "msg_id", "chain"]
+    gg = df.sort_values(base + ["hop"]).copy()
+    gg["hc"] = gg["hop"] - gg.groupby(base)["hop"].transform("mean")
+    s2 = gg.groupby(base)["hc"].agg(lambda x: (x ** 2).sum()).rename("hc2")
+    sums = []
+    for ax in AXES:
+        c = gg[ax] - gg.groupby(base)[ax].transform("mean")
+        s = (c * gg["hc"]).groupby([gg[b] for b in base]).sum().rename(ax)
+        sums.append(s)
+    out = pd.concat(sums, axis=1).join(s2)
+    for ax in AXES:
+        out[ax] = out[ax] / out["hc2"]
+    return out.reset_index()[base + AXES]
 
 
-spreads_direct = load_seed_spreads("sigma_at_hop200.csv")
-spreads_vs = load_seed_spreads("vs_weighted/sigma_at_hop200.csv")
+def pool_hop200(df, cfg=None):
+    """Chain axis scores at hop 200: (50 seeds, 9 chains, 5 axes).
 
-mean_direct = spreads_direct.mean()
-mean_vs = spreads_vs.mean()
-ratio_pilot = mean_vs / mean_direct
-print(f"pilot seeds measured: {spreads_direct.shape[0]}")
-print(f"average spread, Direct:  {mean_direct:.5f}")
-print(f"average spread, VS:      {mean_vs:.5f}")
-print(f"ratio:                   {ratio_pilot:.1f}")
-
-fig, ax = plt.subplots(figsize=(6, 3.2))
-ax.hist(np.log10(spreads_direct.mean(axis=1)), bins=20, alpha=0.6, label="Direct")
-ax.hist(np.log10(spreads_vs.mean(axis=1)), bins=20, alpha=0.6, label="VS")
-ax.set_xlabel("spread of chain endings (log scale)")
-ax.set_ylabel("number of seed texts")
-ax.legend()
-fig.tight_layout()
-plt.show()
-
-# %% [markdown]
-# The spread differs a lot from text to text. Some texts lead all their
-# chains to almost the same ending, others keep the chains apart. This is
-# exactly why the study needs many seed texts: a single text tells us little,
-# but the average over many texts is stable.
-
-# %% [markdown]
-# ## What five chains can measure
-#
-# The spread of one seed is measured from 5 chain endings. Such a measured
-# variance is imperfect in a known way: if a seed's true variance is V, the
-# measured variance behaves like V times a standard statistical rescaling
-# (a chi-square draw with one degree of freedom lost per chain, divided by
-# the number of chains). Sometimes the measured spread comes out too large,
-# sometimes too small. We put that exact rule into the simulation, so no
-# assumption about the error is smuggled in.
-#
-# Before simulating the whole study, one sanity check. If we rank the seed
-# texts by their measured spread, how well does that ranking agree with the
-# ranking by their true spread? We measure agreement with the rank
-# correlation, a number that is 1 when two rankings agree exactly and 0 when
-# they share nothing.
-
-# %%
-rng = np.random.default_rng(42)
-rhos = []
-for rep in range(1000):
-    measured = (spreads_vs
-                * rng.chisquare(4, size=spreads_vs.shape) / 4).mean(axis=1)
-    true_rank = pd.Series(spreads_vs.mean(axis=1)).rank()
-    rho = pd.Series(measured).rank().corr(true_rank)
-    rhos.append(rho)
-print(f"rank agreement of a 5-chain spread measure with the true ranking: "
-      f"{np.mean(rhos):.2f} on average (1000 simulated rounds)")
-
-# %% [markdown]
-# A value of 0.86 means the 5-chain measure recovers which texts keep
-# chains apart and which do not, almost perfectly. This matters for parts of
-# the analysis that look at individual texts rather than the average.
-
-# %% [markdown]
-# ## Simulating the planned study
-#
-# One simulated study works like this.
-#
-# 1. Pick 90 seed texts. We measured 50, so the simulation picks the 90 with
-#    repetition from the 50, which reuses measured spreads instead of
-#    inventing them.
-# 2. For each picked text, draw what 5 chains would measure, once under
-#    Direct and once under VS. The two arms share the same text, so a text
-#    that is naturally wide is wide in both arms.
-# 3. Compute the average difference between the VS spread and the Direct
-#    spread across the 90 texts. Then apply the simplest possible test: the
-#    difference counts as found when it exceeds roughly twice its own
-#    typical variation, the usual two-sided 5 percent rule.
-#
-# We repeat this 2000 times. The share of runs in which the study finds the
-# difference is the chance of finding it. We also check the same procedure
-# inside one kind of text alone, because the corpus has three kinds and each
-# kind gets 30 texts.
-
-# %%
-def chance_of_finding(spreads_direct, spreads_vs, n_texts, chains,
-                      reps, rng, ratio=1.0):
-    """Share of simulated studies that find the VS-minus-Direct difference.
-
-    Each scale's spread is measured with the given number of chains and the
-    known measurement rule, then the five scales are averaged, which mirrors
-    the preregistered measure. The optional ratio sets how large the average
-    effect is, as the ratio of the VS spread to the Direct spread. The pilot
-    measured 8.5. We study smaller values because the confirmatory study
-    uses four models, four tasks, and human-written seed texts, where the
-    effect may be weaker.
+    cfg=None keeps every config (a dict per config, see pools_per_config);
+    a config name restricts the pool to that setting.
     """
-    n_pilot = spreads_direct.shape[0]
-    scale = ratio / ratio_pilot
-    vs_scenario = spreads_vs * scale
-    found = 0
-    for _ in range(reps):
-        idx = rng.integers(0, n_pilot, size=n_texts)
-        vs_meas = (vs_scenario[idx]
-                   * rng.chisquare(chains - 1, size=(n_texts, len(AXES)))
-                   / (chains - 1)).mean(axis=1)
-        dir_meas = (spreads_direct[idx]
-                    * rng.chisquare(chains - 1, size=(n_texts, len(AXES)))
-                    / (chains - 1)).mean(axis=1)
-        d = vs_meas - dir_meas
-        se = np.std(d, ddof=1) / math.sqrt(n_texts)
-        if abs(d.mean()) > 1.96 * se:
-            found += 1
-    return found / reps
+    d = df.loc[df["hop"] == 200]
+    if cfg is not None:
+        d = d.loc[d["config"] == cfg]
+    wide = d.pivot_table(index=["msg_id", "chain"], values=AXES)
+    wide = wide.reorder_levels(["msg_id", "chain"]).sort_index()
+    sh = wide.index.get_level_values("msg_id").nunique()
+    assert wide.shape[0] == sh * 9, "incomplete (seed, chain) grid at hop 200"
+    return wide.to_numpy().astype(float).reshape(sh, 9, len(AXES))
 
 
-rng = np.random.default_rng(7)
-chance_all = chance_of_finding(spreads_direct, spreads_vs, 90, 5, 2000, rng,
-                               ratio=ratio_pilot)
-chance_one_kind = chance_of_finding(spreads_direct, spreads_vs, 30, 5, 2000, rng,
-                                    ratio=ratio_pilot)
-print(f"chance of finding the pilot-sized effect, all 90 texts:      "
-      f"{chance_all:.0%}")
-print(f"chance of finding it inside one kind of text (30 texts):     "
-      f"{chance_one_kind:.0%}")
+def pools_per_config(df):
+    """One (50, 9, 5) pool per decoding config."""
+    return {cfg: pool_hop200(df, cfg) for cfg in sorted(df["config"].unique())}
+
+
+def pool_last_hop(metric):
+    """Per-chain last-hop values for one metric at the fixed setting:
+    (50 seeds, 9 chains), per arm."""
+    out = {}
+    for arm in ("direct", "vs_weighted"):
+        rel = ("vs_weighted/metrics_last_hop_cumulative.csv"
+               if arm == "vs_weighted" else "metrics_last_hop_cumulative.csv")
+        df = pd.read_csv(STATS / rel, usecols=["config", "msg_id", "chain",
+                                              "metric", "value"])
+        d = df[(df["metric"] == metric) & (df["config"] == CONFIG)]
+        wide = d.pivot_table(index=["msg_id", "chain"], values="value")
+        wide = wide.reorder_levels(["msg_id", "chain"]).sort_index()
+        sh = wide.index.get_level_values("msg_id").nunique()
+        assert wide.shape[0] == sh * 9, "incomplete (seed, chain) grid"
+        out[arm] = wide.to_numpy().astype(float).reshape(sh, 9)
+    return out
+
+
+axis_dir = load_axis("axis_cumulative_long.csv")
+axis_vs = load_axis("vs_weighted/axis_cumulative_long.csv")
+slopes_dir = chain_slopes(axis_dir)
+slopes_vs = chain_slopes(axis_vs)
+scores_dir = pool_hop200(axis_dir, CONFIG)
+scores_vs = pool_hop200(axis_vs, CONFIG)
+slopes_fixed = {
+    "direct": chain_slopes(axis_dir.loc[axis_dir["config"] == CONFIG]),
+    "vs": chain_slopes(axis_vs.loc[axis_vs["config"] == CONFIG]),
+}
+cos_pools = pool_last_hop("cosine")
+ent_ab_pools = pool_last_hop("entail_ab")
+ent_ba_pools = pool_last_hop("entail_ba")
 
 # %% [markdown]
-# ## What if the real effect is weaker than in the pilot?
-#
-# The pilot used one small model and one task. The effect may be weaker for
-# the newer models in the panel, for the other tasks, and for the
-# human-written seed texts. So we lower the assumed effect and repeat. A
-# ratio of 1 means no effect at all, which shows the false alarm rate. A
-# ratio of 8.5 is the pilot result.
+# The pools tie to the published pipeline values as follows. The fixed-
+# setting spread sits at the Direct level under Direct and about ten times
+# higher under VS; the grid average reproduces the paper's 8.52 ratio; the
+# drift values reproduce the published per-setting drift; the similarity
+# and entailment means reproduce the published last-hop tables.
 
 # %%
-scenarios = [1.0, 1.25, 1.5, 2.0, 3.0, 5.0, ratio_pilot]
-rows = []
-for ratio in scenarios:
-    c_all = chance_of_finding(spreads_direct, spreads_vs, 90, 5, 2000, rng,
-                              ratio=ratio)
-    c_kind = chance_of_finding(spreads_direct, spreads_vs, 30, 5, 2000, rng,
-                               ratio=ratio)
-    rows.append((f"{ratio:.1f}", f"{c_all:.0%}", f"{c_kind:.0%}"))
-table = pd.DataFrame(rows, columns=[
-    "assumed effect (VS spread / Direct spread)",
-    "chance, all 90 texts",
-    "chance, one kind of text (30 texts)",
-])
-print(table.to_string(index=False))
-table
+def grid_sigma(df):
+    s = df.loc[df["hop"] == 200]
+    per_seed = s.groupby(["config", "msg_id"])[AXES].var(ddof=1)
+    return float(per_seed.mean(axis=1).mean())
+
+
+sig_d = scores_dir.var(axis=1, ddof=1).mean()
+sig_v = scores_vs.var(axis=1, ddof=1).mean()
+print(f"spread, fixed setting: Direct {sig_d:.5f}  VS {sig_v:.5f}  "
+      f"ratio {sig_v / sig_d:.2f}")
+print(f"spread, grid average:  Direct {grid_sigma(axis_dir):.5f}  "
+      f"VS {grid_sigma(axis_vs):.5f}  "
+      f"ratio {grid_sigma(axis_vs) / grid_sigma(axis_dir):.2f}")
+
+
+def config_drift(slopes):
+    """Headline drift per config: signed per-axis slopes averaged across
+    chains first, absolute value after, mean across the axes."""
+    return slopes.groupby("config")[AXES].mean().abs().mean(axis=1)
+
+
+fdir = config_drift(slopes_dir)
+fvs = config_drift(slopes_vs)
+print(f"drift, fixed setting:  Direct {fdir[CONFIG]:.2e}  "
+      f"VS {fvs[CONFIG]:.2e}")
+print(f"drift, grid average:   Direct {fdir.mean():.2e}  VS {fvs.mean():.2e}")
+print(f"last-hop cosine:       Direct {cos_pools['direct'].mean():.3f}  "
+      f"VS {cos_pools['vs_weighted'].mean():.3f}")
+print(f"entail ab / ba, Direct: {ent_ab_pools['direct'].mean():.3f} / "
+      f"{ent_ba_pools['direct'].mean():.3f}")
 
 # %% [markdown]
-# The planned design finds a doubling of the spread with almost certainty,
-# even when we look at one kind of text alone, and it finds a 50 percent
-# larger spread with a nine in ten chance across all texts. When there is no
-# effect, the false alarm rate sits near the intended 5 percent (the
-# simulation gave 6 and 8 percent). The study is therefore not oversized for
-# the preregistered question, and it has a clear safety margin against
-# weaker effects.
-
-# %% [markdown]
-# ## Why 90 texts and 5 chains, and not another split
+# ## Estimators and decision rules
 #
-# The total workload is the number of texts times the number of chains. The
-# three designs below all sit at the same total workload, roughly 450 chains
-# per condition and task. They differ in how that workload is spent.
+# Every preregistered quantity is computed per seed; conditions are compared
+# paired by seed, with a paired t interval over the seed-level differences.
+# The five preregistered tests of a task:
+#
+# - **Spread (H1).** Per seed and axis, the variance of the axis scores
+#   across the seed's chains, averaged over the five axes. Direction: VS
+#   above Direct.
+# - **Drift equivalence (H1).** The per-seed mean absolute drift, built
+#   from the signed chain-average per-axis slopes. Rule: the 95% interval
+#   of the VS-minus-Direct differences lies entirely inside $\pm 0.005$
+#   axis units per hop. An interval criterion, outside the test family.
+# - **Similarity (H2a).** Per seed, the mean last-hop cosine. Direction:
+#   VS below Direct.
+# - **Per-axis drift (H2b).** Per seed, the signed chain-average slope on
+#   each preregistered axis. Direction: below 0 on both axes.
+# - **Control contrast (H3).** The spread estimator against the Multi-k
+#   uniform control. Direction: VS above control.
+#
+# A task's five tests enter the per-model Benjamini-Hochberg family over
+# the four tasks (20 tests, false discovery rate 0.05). A test counts as
+# found when the adjusted test rejects and the estimate points the
+# preregistered way. The H2b asymmetry rule (seed-to-hop minus hop-to-seed
+# entailment, VS minus Direct, unadjusted 95% interval above 0) and the
+# equivalence rule are interval criteria, evaluated outside the family.
+
+# %% [markdown]
+# ## Scenario machinery
+#
+# The effect strength runs on one dial, $\lambda \in \{0, 0.5, 1\}$. At
+# $\lambda = 0$ the VS arm reproduces the Direct pool seed by seed, so the
+# whole 20-test family is null and the run measures false alarms. At
+# $\lambda = 1$ the VS arm is the pilot's own measured values. At 0.5 the
+# seed-level effect is halfway: synthetic VS chain values are the Direct
+# pool plus half the seed-level VS-minus-Direct offset, and the spread
+# scenario rescales the VS chains' within-seed deviations so each seed's
+# variance interpolates between its Direct and pilot-VS values. Each seed
+# keeps its own level throughout; nothing in the scenarios invents a
+# distribution.
+#
+# The Multi-k uniform control has no pilot data. Two labeled scenarios
+# stand in for it: the control behaves like Direct (power scenario for
+# H3), or like VS (the scenario under which probability weighting adds
+# nothing beyond the joint list, so H3 is null).
 
 # %%
-designs = [(50, 9), (75, 6), (90, 5)]
-rows = []
-for n_texts, chains in designs:
-    c_all = chance_of_finding(spreads_direct, spreads_vs, n_texts, chains,
-                              2000, rng, ratio=1.5)
-    c_kind = chance_of_finding(spreads_direct, spreads_vs,
-                               max(1, round(n_texts / 3)), chains, 2000, rng,
-                               ratio=1.5)
-    rows.append((f"{n_texts} texts x {chains} chains", f"{c_all:.0%}",
-                 f"{c_kind:.0%}"))
-table = pd.DataFrame(rows, columns=[
-    "design at the same total workload",
-    "chance of finding a 50 percent larger spread, all texts",
-    "chance inside one kind of text",
-])
-print(table.to_string(index=False))
-table
-
-# %% [markdown]
-# At a fixed total workload, spending it on more seed texts beats spending
-# it on more chains per text, because the average over texts is the harder
-# thing to estimate. The planned 90 by 5 design finds weaker effects best
-# while still measuring each text well, and the ranking check above showed
-# the 5-chain spread measure still recovers which texts are wide and which
-# are narrow. Deeper designs win a little on that ranking, shallower
-# designs lose the per-text information almost entirely.
-
-# %% [markdown]
-# ## The second preregistered effect: does VS cost information?
-#
-# The spread result says little without its price tag. The paper's second
-# preregistered prediction is that VS keeps chains diverse but transmits
-# less of what the seed said. The measure is the last hop's similarity to
-# the seed text, a score that is 1 when two texts say the same thing and
-# falls as they drift apart. Direct prompting should keep this score high,
-# VS should lower it.
-#
-# This part is a mean, not a variance, so the measurement logic from above
-# simplifies: for one seed, the per-chain similarity scores are averaged,
-# and the average of 5 chain values jitters around the seed's true value by
-# an amount that follows directly from how much the chains disagree with
-# each other in the pilot.
-
-# %%
-def load_seed_fidelity(rel_path, metric="cosine"):
-    """Per seed, two numbers: the mean and the disagreement (variance across
-    chains) of the last hop's similarity. Primary decoding setting of the
-    pilot (temperature 0.8, top-p 0.5), as in the confirmatory study."""
-    fp = DATA_DIR / "data" / "echodrift_stats" / rel_path
-    df = pd.read_csv(fp, usecols=["config", "msg_id", "metric", "value"])
-    df = df[(df["metric"] == metric) & (df["config"] == "temp0.8_topp0.5")]
-    per_seed = df.groupby("msg_id")["value"].agg(["mean", "var"])
-    return per_seed["mean"].to_numpy(), per_seed["var"].fillna(0.0).to_numpy()
+def bh_adjust(p):
+    """Benjamini-Hochberg adjusted p-values."""
+    p = np.asarray(p, dtype=float)
+    m = len(p)
+    order = np.argsort(p)
+    ranked = p[order] * m / (np.arange(m) + 1)
+    adj = np.minimum.accumulate(ranked[::-1])[::-1]
+    out = np.empty(m)
+    out[order] = np.clip(adj, 0, 1)
+    return out
 
 
-fid_direct, wid_direct = load_seed_fidelity("metrics_last_hop_cumulative.csv")
-fid_vs, wid_vs = load_seed_fidelity("vs_weighted/metrics_last_hop_cumulative.csv")
-drop_pilot = fid_direct.mean() - fid_vs.mean()
-print(f"last-hop similarity: Direct {fid_direct.mean():.3f}, "
-      f"VS {fid_vs.mean():.3f}, drop {drop_pilot:.3f} (50 texts)")
+def paired_check(diff):
+    """(p, mean, half-width) of the seed-level paired differences."""
+    diff = np.asarray(diff, dtype=float)
+    n = len(diff)
+    se = diff.std(ddof=1) / math.sqrt(n)
+    if se == 0.0:
+        return 1.0, float(diff.mean()), 0.0
+    tval = float(diff.mean() / se)
+    p = 2 * stats.t.sf(abs(tval), n - 1)
+    hw = float(stats.t.ppf(0.975, n - 1) * se)
+    return p, float(diff.mean()), hw
 
-# %%
-def chance_of_finding_drop(fid_direct, wid_direct, fid_vs, wid_vs, n_texts,
-                           chains, reps, rng, drop):
-    """Chance of finding a similarity drop of the given size.
 
-    Same procedure as the spread part, with one difference: the per-chain
-    similarity is a simple measurement, so the seed's measured mean carries
-    the chains' disagreement divided by the chain count, drawn as a normal
-    error.
+def build_arms(lam):
+    """Chain-level pools at effect strength lam.
+
+    Direct keeps its measured pools. The VS arm's 'spread' pool rescales
+    the pilot deviations; the 'slope', 'cos', 'ent_ab', and 'ent_ba' pools
+    shift the Direct pool by lam times the seed-level offset.
     """
-    n_pilot = len(fid_direct)
-    pilot_drop = fid_direct - fid_vs
-    found = 0
-    for _ in range(reps):
-        idx = rng.integers(0, n_pilot, size=n_texts)
-        vs_true = fid_direct[idx] - pilot_drop[idx] * (drop / drop_pilot)
-        direct_true = fid_direct[idx]
-        vs_meas = vs_true + rng.normal(0.0, np.sqrt(wid_vs[idx] / chains))
-        direct_meas = direct_true + rng.normal(0.0,
-                                               np.sqrt(wid_direct[idx] / chains))
-        d = direct_meas - vs_meas
-        se = np.std(d, ddof=1) / math.sqrt(n_texts)
-        if abs(d.mean()) > 1.96 * se:
-            found += 1
-    return found / reps
+    def sl(arm):
+        return slopes_fixed[arm][AXES].to_numpy().reshape(50, 9, 5)
+
+    return {
+        "direct": {
+            "spread": scores_dir,
+            "slope": sl("direct"),
+            "cos": cos_pools["direct"][:, :, None],
+            "ent_ab": ent_ab_pools["direct"][:, :, None],
+            "ent_ba": ent_ba_pools["direct"][:, :, None],
+        },
+        "vs": {
+            "spread": synth_var_pool(scores_dir, scores_vs, lam),
+            "slope": synth_shift_pool(sl("direct"), sl("vs"), lam),
+            "cos": synth_shift_pool(cos_pools["direct"][:, :, None],
+                                    cos_pools["vs_weighted"][:, :, None], lam),
+            "ent_ab": synth_shift_pool(ent_ab_pools["direct"][:, :, None],
+                                       ent_ab_pools["vs_weighted"][:, :, None],
+                                       lam),
+            "ent_ba": synth_shift_pool(ent_ba_pools["direct"][:, :, None],
+                                       ent_ba_pools["vs_weighted"][:, :, None],
+                                       lam),
+        },
+    }
 
 
-rng = np.random.default_rng(11)
-rows = []
-for drop in [0.0, 0.05, 0.10, 0.15, drop_pilot]:
-    c_all = chance_of_finding_drop(fid_direct, wid_direct, fid_vs, wid_vs,
-                                   90, 5, 2000, rng, drop)
-    c_kind = chance_of_finding_drop(fid_direct, wid_direct, fid_vs, wid_vs,
-                                    30, 5, 2000, rng, drop)
-    rows.append((f"{drop:.2f}", f"{c_all:.0%}", f"{c_kind:.0%}"))
-table = pd.DataFrame(rows, columns=[
-    "assumed similarity drop (VS below Direct)",
-    "chance, all 90 texts",
-    "chance, one kind of text (30 texts)",
-])
-print(table.to_string(index=False))
-table
+def synth_var_pool(pool_dir, pool_vs, lam):
+    """Synthetic VS spread pool at effect strength lam."""
+    dev = pool_vs - pool_vs.mean(axis=1, keepdims=True)
+    v_s = pool_vs.var(axis=1, ddof=1)
+    v_d = pool_dir.var(axis=1, ddof=1)
+    target = lam * v_s + (1 - lam) * v_d
+    scale = np.sqrt(target / np.maximum(v_s, 1e-12))
+    return pool_vs.mean(axis=1, keepdims=True) + scale[:, None, :] * dev
+
+
+def synth_shift_pool(pool_dir, pool_vs, lam):
+    """Synthetic VS pool for centered values (slopes, cosine, entailment)."""
+    off = pool_vs.mean(axis=1) - pool_dir.mean(axis=1)
+    return pool_dir + lam * off[:, None, :]
+
+
+def one_task_stats(rng, n, k, arm_d, arm_v):
+    """Per-seed value arrays for one simulated task study.
+
+    Seeds are resampled with repetition (shared across the arms, so the
+    arms pair through the seed texts); chain draws are independent per arm.
+    """
+    idx = rng.integers(0, scores_dir.shape[0], n)
+    st = {}
+    for key in ("spread", "slope", "cos", "ent_ab", "ent_ba"):
+        A, Bp = arm_d[key], arm_v[key]
+        vd = A[idx[:, None], rng.integers(0, A.shape[1], (n, k))]
+        vv = Bp[idx[:, None], rng.integers(0, Bp.shape[1], (n, k))]
+        if key == "spread":
+            st["spread_d"] = vd.var(axis=1, ddof=1).mean(axis=1)
+            st["spread_v"] = vv.var(axis=1, ddof=1).mean(axis=1)
+        elif key == "slope":
+            m_d, m_v = vd.mean(axis=1), vv.mean(axis=1)
+            st["slope_ax_d"], st["slope_ax_v"] = m_d, m_v
+            st["md_d"] = np.abs(m_d).mean(axis=1)
+            st["md_v"] = np.abs(m_v).mean(axis=1)
+        else:
+            st[f"{key}_d"] = vd.mean(axis=1).ravel()
+            st[f"{key}_v"] = vv.mean(axis=1).ravel()
+    return st
+
+
+def uniform_spread(rng, n, k, pool):
+    """Per-seed spread under the uniform arm's labeled scenario."""
+    vals = pool[rng.integers(0, pool.shape[0], n)[:, None],
+                rng.integers(0, pool.shape[1], (n, k))]
+    return vals.var(axis=1, ddof=1).mean(axis=1)
+
+
+TASK_SIGNS = {"H1_var": 1, "H2a": -1, "H2b_abs": -1, "H2b_fct": -1, "H3": 1}
+
+
+def task_evidence(rng, n, k, arm_d, arm_v, uniform_pool):
+    """One simulated task study's five tests and two interval criteria."""
+    st = one_task_stats(rng, n, k, arm_d, arm_v)
+    st["spread_u"] = uniform_spread(rng, n, k, uniform_pool)
+    t = {}
+    t["H1_var"] = paired_check(st["spread_v"] - st["spread_d"])
+    t["H2a"] = paired_check(st["cos_v"] - st["cos_d"])
+    t["H2b_abs"] = paired_check(st["slope_ax_v"][:, IA]
+                                - st["slope_ax_d"][:, IA])
+    t["H2b_fct"] = paired_check(st["slope_ax_v"][:, IF]
+                                - st["slope_ax_d"][:, IF])
+    t["asym"] = paired_check((st["ent_ab_v"] - st["ent_ab_d"])
+                             - (st["ent_ba_v"] - st["ent_ba_d"]))
+    t["equiv"] = paired_check(st["md_v"] - st["md_d"])
+    t["H3"] = paired_check(st["spread_v"] - st["spread_u"])
+    return t
+
+
+def cell_verdicts(rng, design, lam, tasks_like_pilot, uniform_label, b=B):
+    """Outcome shares over b simulated studies of one (design, scenario).
+
+    tasks_like_pilot=True runs the other three tasks as independent copies
+    ('all tasks like the pilot'); the alternative contributes 15 exact
+    null p-draws ('only paraphrase'). uniform_label in {'direct', 'halfway',
+    'vs'}: the control behaves like Direct (H3 power), halfway between the
+    arms' spreads, or like the VS arm at the current effect strength (under
+    which H3 is null).
+    Returns per-outcome shares with Monte Carlo standard errors, plus the
+    mean interval widths the equivalence and asymmetry rules live on.
+    """
+    n, k = design
+    arms = build_arms(lam)
+    uniform_pool = {
+        "direct": arms["direct"]["spread"],
+        "halfway": synth_var_pool(scores_dir, scores_vs, 0.5),
+        "vs": arms["vs"]["spread"],
+    }[uniform_label]
+    cnt = defaultdict(int)
+    equiv_hw, asym_hw, hw_abs, hw_fct, equiv_mean = [], [], [], [], []
+    for _ in range(b):
+        t = task_evidence(rng, n, k, arms["direct"], arms["vs"],
+                          uniform_pool)
+        p5 = [t[name][0] for name in TASK_SIGNS]
+        if tasks_like_pilot:
+            p20 = list(p5)
+            for _ in range(3):            # the other three task copies
+                t2 = task_evidence(rng, n, k, arms["direct"], arms["vs"],
+                                   uniform_pool)
+                p20 += [t2[name][0] for name in TASK_SIGNS]
+        else:
+            p20 = p5 + list(rng.random(15))
+        adj = bh_adjust(np.array(p20))
+        adj5 = dict(zip(TASK_SIGNS, adj[:len(TASK_SIGNS)]))
+        ok = {}
+        for name, sign in TASK_SIGNS.items():
+            ok[name] = adj5[name] <= ALPHA and t[name][1] * sign > 0
+            cnt[name] += ok[name]
+            cnt[name + "_raw"] += t[name][1] * sign > 0
+        asym_ok = t["asym"][1] - t["asym"][2] > 0
+        eq_ok = (t["equiv"][1] + t["equiv"][2] < BOUND
+                 and t["equiv"][1] - t["equiv"][2] > -BOUND)
+        cnt["H2b_comp"] += ok["H2b_abs"] and ok["H2b_fct"] and asym_ok
+        cnt["H1_comp"] += ok["H1_var"] and eq_ok
+        cnt["equiv_pass"] += eq_ok
+        cnt["asym_pass"] += asym_ok
+        cnt["family_rej"] += bool((adj <= ALPHA).any())
+        equiv_hw.append(t["equiv"][2])
+        equiv_mean.append(t["equiv"][1])
+        asym_hw.append(t["asym"][2])
+        hw_abs.append(t["H2b_abs"][2])
+        hw_fct.append(t["H2b_fct"][2])
+    out = {}
+    for name in ("H1_var", "H2a", "H2b_abs", "H2b_fct", "H3", "H2b_comp",
+                 "H1_comp", "equiv_pass", "asym_pass", "family_rej"):
+        sh = cnt[name] / b
+        out[name] = sh
+        out[name + "_se"] = math.sqrt(sh * (1 - sh) / b)
+    out["equiv_hw_mean"] = float(np.mean(equiv_hw))
+    out["equiv_mean"] = float(np.mean(equiv_mean))
+    out["asym_hw_mean"] = float(np.mean(asym_hw))
+    out["hw_abs_mean"] = float(np.mean(hw_abs))
+    out["hw_fct_mean"] = float(np.mean(hw_fct))
+    return out
+
 
 # %% [markdown]
-# ## How well can the study certify that VS leaves the drift unchanged?
+# ## Results at the planned size
 #
-# The first hypothesis has a second part. Beyond raising the spread, VS is
-# predicted to leave the drift unchanged: the texts should not slide along
-# the scales, in the average across the five scales, by more than a
-# preregistered bound of 0.005 scale units per hop. The preregistered rule
-# requires the whole uncertainty interval of the measured difference
-# between VS and Direct to fit inside that bound.
+# Six candidate designs under three effect strengths. All designs except
+# 112x5 cost the same 450 transmitted chains per condition and task; 112x5
+# costs 560 (+24 percent). Under the 'all tasks like the pilot' scenario
+# the three other tasks run as copies of the paraphrase simulation with
+# fresh draws; the 'only paraphrase' variant leaves those 15 tests null.
+# Column meanings:
 #
-# Certification therefore rests on how wide that interval is. Its width
-# comes from two sources: the texts differ in their drift, and the 5 chains
-# of a seed measure the seed's drift with an error. Both can be read off
-# the pilot. The pilot's own drift numbers are tiny. At the primary
-# decoding setting, the drift difference measures about 0.0006 scale units
-# per hop, roughly eight times smaller than the bound, so the interval fits
-# inside the bound with room to spare.
-#
-# The directional part of the fidelity hypothesis (the per-scale drift
-# toward more abstract and more general language) uses this same drift
-# machinery broken out per scale, so the width computed here applies to
-# those contrasts too.
+# - **H1 comp**: spread contrast found in the family AND the equivalence
+#   interval inside the bound;
+# - **H2b comp**: both per-axis tests found AND the asymmetry interval
+#   pointing the same way;
+# - **H2a**: the similarity contrast found;
+# - **H3**: the control contrast found (control labeled as Direct);
+# - **equiv**: the equivalence interval inside the bound;
+# - **family**: share of simulated studies with at least one family
+#   rejection; under no effect this row is the false alarm rate.
 
 # %%
-def per_seed_drift(rel_path):
-    """Per chain and per scale, the slope of the scale score on the hop
-    number, then two numbers per seed: the mean absolute drift and its
-    disagreement across chains (variance). Primary decoding setting of the
-    pilot (temperature 0.8, top-p 0.5), as in the confirmatory study."""
-    fp = DATA_DIR / "data" / "echodrift_stats" / rel_path
-    df = pd.read_csv(fp, usecols=["config", "msg_id", "chain", "hop"] + AXES)
-    df = df[df["config"] == "temp0.8_topp0.5"]
-    df["hc"] = df["hop"] - df["hop"].mean()
-    g = df.groupby(["msg_id", "chain"], sort=True)
-    hc2 = float((df["hc"] ** 2).sum()) / g.ngroups   # same hop grid per chain
-    for axis in AXES:
-        df[axis] = (df[axis] - g[axis].transform("mean")) * df["hc"]
-    slopes = g[AXES].sum() / hc2                       # (450 chains, 5 scales)
-    chain_drift = slopes.abs().mean(axis=1)
-    per_seed = chain_drift.groupby(level="msg_id").agg(["mean", "var"])
-    return per_seed["mean"].to_numpy(), per_seed["var"].fillna(0.0).to_numpy()
+def pct(x):
+    return f"{100 * x:.0f}%"
 
 
-drift_direct, w_drift_direct = per_seed_drift("axis_cumulative_long.csv")
-drift_vs, w_drift_vs = per_seed_drift("vs_weighted/axis_cumulative_long.csv")
-bound = 0.005
-print(f"mean absolute drift per hop: Direct {drift_direct.mean():.6f}, "
-      f"VS {drift_vs.mean():.6f} (primary setting, 50 texts)")
-print(f"bound: {bound}")
-
-# Interval half-width at the planned design (90 texts, 5 chains):
-between = (drift_vs - drift_direct).var(ddof=1)
-within = float(np.mean(w_drift_vs + w_drift_direct)) / 5  # chains per seed
-half_width = 1.96 * np.sqrt(between / 90 + within / 90)
-print(f"uncertainty interval half-width at 90 texts x 5 chains: "
-      f"{half_width:.6f} scale units")
-print(f"the bound allows {bound / half_width:.1f} times this width")
+rows = []
+for lam in LAMBDAS:
+    label = "none" if lam == 0.0 else f"{lam:.0%} of pilot"
+    for design in DESIGNS:
+        r = cell_verdicts(
+            np.random.default_rng(
+                SEED + int(1000 * lam) + design[0] * 97 + design[1]),
+            design, lam, tasks_like_pilot=True, uniform_label="direct")
+        rows.append({
+            "design": f"{design[0]}x{design[1]}",
+            "chains/task": design[0] * design[1],
+            "effect": label,
+            "H1": pct(r["H1_comp"]),
+            "H2b": pct(r["H2b_comp"]),
+            "H2a": pct(r["H2a"]),
+            "H3": pct(r["H3"]),
+            "equiv": pct(r["equiv_pass"]),
+            "family": pct(r["family_rej"]),
+        })
+results = pd.DataFrame(rows)
+print(results.to_string(index=False))
+results
 
 # %% [markdown]
-# ## What this means for the preregistration
+# Under no effect, the family false alarm sits below the intended 5
+# percent at every design (2 to 3 percent) and no preregistered test
+# fires. At the pilot's effect, the spread, similarity, and control
+# contrasts are found in every simulated study at every design, and the
+# equivalence rule passes everywhere: its interval is two orders of
+# magnitude tighter than the bound. The per-axis drift component (H2b) is
+# the lowest-power component, and its power grows with the number of seeds: from 55
+# percent at 50x9 to 99 percent at 150x3, with 88 percent at the planned
+# 90x5.
 #
-# The preregistered size of 90 seed texts and 5 chains is justified on three
-# grounds.
+# One estimand note. The equivalence rule works on the per-seed drift
+# differences (the paper's descriptive drift numbers use the pooled
+# signed-per-axis aggregation, which is smaller: 0.00015 axis units per
+# hop at the pilot). The rule's own value at the pilot effect is the
+# printed mean below; both sit far inside the 0.005 bound.
+
+# %%
+pilot_design = [r for r in rows if r["design"] == "90x5"]
+for row in pilot_design:
+    print(row)
+
+# detailed interval widths at 90 x 5, pilot effect
+r90 = cell_verdicts(np.random.default_rng(SEED + 5), (90, 5), 1.0,
+                    tasks_like_pilot=True, uniform_label="direct")
+print("\n90x5, pilot effect: "
+      f"H1 comp {pct(r90['H1_comp'])}, H2b comp {pct(r90['H2b_comp'])}, "
+      f"H2a {pct(r90['H2a'])}, H3 {pct(r90['H3'])}, "
+      f"equiv {pct(r90['equiv_pass'])}")
+print(f"equivalence interval: mean {r90['equiv_mean']:.2e} units/hop, "
+      f"half-width {r90['equiv_hw_mean']:.2e} "
+      f"(bound {BOUND:.3f}, factor {BOUND / r90['equiv_hw_mean']:.0f} above)")
+print(f"asymmetry interval: half-width {r90['asym_hw_mean']:.3f}")
+print(f"per-axis drift intervals: abstract {r90['hw_abs_mean']:.2e}, "
+      f"factual {r90['hw_fct_mean']:.2e} units/hop")
+
+# 112 x 5 (+24% cost): what the extra chains buy at half effect
+r112 = cell_verdicts(np.random.default_rng(SEED + 6), (112, 5), 0.5,
+                     tasks_like_pilot=True, uniform_label="direct")
+print(f"\n112x5, half effect:   "
+      f"H1 comp {pct(r112['H1_comp'])}, H2b comp {pct(r112['H2b_comp'])}, "
+      f"H2a {pct(r112['H2a'])}, H3 {pct(r112['H3'])}, "
+      f"equiv {pct(r112['equiv_pass'])}")
+
+# %% [markdown]
+# ## The control contrast under its labeled scenarios
 #
-# 1. It finds the pilot-sized effect with certainty in every simulated run,
-#    overall and inside each kind of text.
-# 2. It keeps a good chance of finding much weaker effects. A 50 percent
-#    larger spread is found with a nine in ten chance across all texts and a
-#    six in ten chance inside one kind of text, and a doubling is found
-#    almost always in both. The false alarm rate stays near the intended 5
-#    percent when there is no effect.
-# 3. At the same total workload, it is the best available split between
-#    breadth across texts and depth per text, and the 5-chain spread measure
-#    still ranks the texts usefully (rank agreement 0.86), which the
-#    analyses of individual texts rely on.
+# H3's power rests entirely on where the Multi-k uniform control's spread
+# sits, and the pilot measured no control arm. Three labeled scenarios
+# bracket it: the control behaves like Direct, halfway between the arms'
+# spread levels, or like the VS arm (under which H3 must read as null; its
+# share below is the scenario's false alarm).
+
+# %%
+h3_rows = []
+for lam in (0.0, 0.5, 1.0):
+    for ul in ("direct", "halfway", "vs"):
+        r = cell_verdicts(
+            np.random.default_rng(SEED + 900 + int(1000 * lam)),
+            (90, 5), lam, tasks_like_pilot=True, uniform_label=ul)
+        h3_rows.append({
+            "effect": ("none" if lam == 0.0 else f"{lam:.0%} of pilot"),
+            "control spread at": ul,
+            "H3 found": pct(r["H3"]),
+        })
+print(pd.DataFrame(h3_rows).to_string(index=False))
+
+# %% [markdown]
+# ## Sensitivity checks
 #
-# The second preregistered effect gets the same verdict. The similarity
-# drop is found in every simulated run, even at one fifth of the pilot's
-# size and even inside one kind of text alone (99 percent there). And the
-# drift equivalence claim is comfortably within reach: at the planned
-# design, the uncertainty interval around the measured drift difference is
-# over 70 times narrower than the preregistered bound allows, and the
-# pilot's own drift difference sits about eight times inside the bound.
+# Three checks protect the conclusions: a subgroup stand-in for the genre
+# cells, the grid-averaged pools in place of the fixed setting, and the
+# chain-score discreteness the empirical pools carry.
+
+# %% [markdown]
+# **Genre-cell stand-in.** The pilot pools have no verified genre labels,
+# so 30 resampled seeds (the size of one genre cell in the confirmatory
+# corpus) stand in for a single cell's analysis. This is a hypothetical
+# subgroup, not a genre-specific result.
+
+# %%
+r30 = cell_verdicts(np.random.default_rng(SEED + 777), (30, 5), 1.0,
+                    tasks_like_pilot=True, uniform_label="direct")
+print(f"30 seeds x 5 chains, pilot effect: H1 comp {pct(r30['H1_comp'])}, "
+      f"H2b comp {pct(r30['H2b_comp'])}, H2a {pct(r30['H2a'])}, "
+      f"equiv {pct(r30['equiv_pass'])}")
+
+# %% [markdown]
+# **Grid-averaged pools.** The confirmatory study fixes one decoding
+# setting per model; the pilot's nine settings average to a smaller spread
+# ratio (8.52 against the fixed setting's 10.73). Two questions follow, and
+# each gets its own simulated study on the settings pools:
 #
-# Two caveats belong in the preregistration.
+# - does the spread test stay well powered when the seed-level spread is
+#   the mean over the nine settings rather than the fixed setting's?
+# - does the drift equivalence rule still pass when the
+#   per-seed drift is the mean over the nine settings?
+
+# %%
+def cfg_averaged(design, lam, b, measure="spread"):
+    """Grid-averaged spread power or drift-equivalence pass rate at a design.
+
+    measure 'spread': per-seed value = mean over settings of the
+    mean-over-axes variance of k drawn chains; verdict = spread contrast
+    found (unadjusted here; the family scenario adds nothing, the fixed-
+    setting pass rates above already carry it). measure 'drift': per-seed
+    value = mean over settings of the mean absolute drift; rule = the 95%
+    interval of the paired differences inside the bound.
+    """
+    n, k = design
+    pd_ = pools_per_config(load_axis("axis_cumulative_long.csv"))
+    pv_ = pools_per_config(load_axis("vs_weighted/axis_cumulative_long.csv"))
+    if measure == "drift":
+        s_d = slopes_per_config(pd_, load_axis("axis_cumulative_long.csv"))
+        s_v = slopes_per_config(pv_, load_axis(
+            "vs_weighted/axis_cumulative_long.csv"))
+        slope_pools_dir, slope_pools_vs = s_d, s_v
+    rng = np.random.default_rng(SEED + 4242 + int(1000 * lam))
+    found = eq_pass = 0
+    hw_all = []
+    for _ in range(b):
+        idx = rng.integers(0, 50, n)
+        v_vals, d_vals = [], []
+        for cfg in pd_:
+            if measure == "spread":
+                wd = pd_[cfg][idx[:, None], rng.integers(0, 9, (n, k))]
+                wv = synth_var_pool(pd_[cfg], pv_[cfg], lam)
+                wv = wv[idx[:, None], rng.integers(0, 9, (n, k))]
+                v_vals.append(wv.var(axis=1, ddof=1).mean(axis=1))
+                d_vals.append(wd.var(axis=1, ddof=1).mean(axis=1))
+            else:
+                sdv = synth_shift_pool(slope_pools_dir[cfg],
+                                       slope_pools_vs[cfg], lam)
+                sdv = sdv[idx[:, None], rng.integers(0, 9, (n, k))]
+                sdd = slope_pools_dir[cfg][idx[:, None],
+                                           rng.integers(0, 9, (n, k))]
+                v_vals.append(np.abs(sdv.mean(axis=1)).mean(axis=1))
+                d_vals.append(np.abs(sdd.mean(axis=1)).mean(axis=1))
+        diff = np.mean(v_vals, axis=0) - np.mean(d_vals, axis=0)
+        p, mean, hw = paired_check(diff)
+        hw_all.append(hw)
+        if measure == "spread":
+            found += (p <= ALPHA) and mean > 0
+        else:
+            eq_pass += mean + hw < BOUND and mean - hw > -BOUND
+    if measure == "spread":
+        return {"found": found / b, "hw": float(np.mean(hw_all))}
+    return {"equiv_pass": eq_pass / b, "hw": float(np.mean(hw_all))}
+
+
+def slopes_per_config(score_pools, df):
+    """Per-config chain slope pools for the settings grid."""
+    sl = pool_slopes_all(df)
+    return {cfg: sl[cfg] for cfg in score_pools}
+
+
+def pool_slopes_all(df):
+    """Chain slope pools per config: {config: (50, 9, 5)}."""
+    out = {}
+    for cfg in sorted(df["config"].unique()):
+        s = chain_slopes(df.loc[df["config"] == cfg])
+        wide = s.pivot_table(index=["msg_id", "chain"], values=AXES)
+        wide = wide.reorder_levels(["msg_id", "chain"]).sort_index()
+        sh = wide.index.get_level_values("msg_id").nunique()
+        assert wide.shape[0] == sh * 9, f"incomplete slope grid in {cfg}"
+        out[cfg] = (wide.to_numpy().astype(float)
+                    .reshape(sh, 9, len(AXES)))
+    return out
+
+
+for lam in (0.0, 1.0):
+    tag = "none" if lam == 0.0 else "pilot"
+    r = cfg_averaged((90, 5), lam, 1000, measure="spread")
+    print(f"grid-averaged spread, effect {tag}: found {pct(r['found'])}; "
+          f"contrast half-width {r['hw']:.2e}")
+    r = cfg_averaged((90, 5), lam, 1000, measure="drift")
+    print(f"grid-averaged drift, effect {tag}: equivalence "
+          f"{pct(r['equiv_pass'])}; interval half-width {r['hw']:.2e}")
+
+# %% [markdown]
+# **Endpoint discreteness.** Chain endings repeat: under Direct, the nine
+# chains of a seed often converge to one paraphrase and repeat it, so that
+# seed's measured spread can be zero. The empirical pools carry this
+# structure into the simulation; the two counts below report how much of it
+# exists.
+
+# %%
+deg_d = (scores_dir.var(axis=1, ddof=1) == 0).mean()
+deg_v = (scores_vs.var(axis=1, ddof=1) == 0).mean()
+print(f"Direct (seed, axis) cells with zero spread across the 9 chains: "
+      f"{pct(deg_d)}")
+print(f"VS (seed, axis) cells with zero spread: {pct(deg_v)}")
+
+# %% [markdown]
+# # What the preregistration takes from this notebook
 #
-# The check reuses measured spreads and fidelities from 50 pilot texts of
-# one small model under the paraphrase task. It assumes the other texts and
-# tasks behave similarly, which is the standard assumption for such a check
-# and not a guarantee.
+# **The planned size carries the preregistered decision rules.** At 90
+# seed texts and 5 chains, the pilot-sized spread, similarity, and control
+# contrasts are found in every simulated study, the equivalence rule
+# passes with its interval about a hundred times inside the bound, and the
+# per-axis drift component passes with a comfortable margin (around 90
+# percent). Calibration rests on the same machinery: under no effect, the
+# family false alarm stays at 2 to 3 percent, below the intended 5.
 #
-# The fidelity measure brings an extra source of variation: the chains of
-# one seed disagree in how much of the seed survives, so the per-text
-# similarity scores have a real spread of their own. The simulation carries
-# that spread, read off the pilot, and with it the design still finds even
-# small similarity drops.
+# **The lowest-power component is the per-axis drift test.** Per-axis power grows with
+# seeds, not chains: 150x3 reaches 99 percent on the per-axis component at
+# the pilot effect, against 88 percent at 90x5. The locked design keeps
+# the per-chain depth; the comparison table states what a budget-neutral
+# or slightly costlier reorder would move.
 #
-# The simulated test is the simplest possible analysis of each average. The
-# preregistered analysis pools information across texts and scales in a
-# stricter way, which can only improve on this check. So the chances
-# reported here are, if anything, a floor.
+# **The control contrast is a scenario claim.** H3's power holds near 100
+# percent when the Multi-k uniform control's spread behaves like Direct,
+# and the halfway and VS-like scenarios bracket what it would take to
+# overturn a positive verdict; the prereg text quotes the control-scenario
+# table, not a single number.
+#
+# **Honest constraints.** The pools come from one small model under the
+# paraphrase task; the other models and tasks enter as labeled copies. The
+# simulated chances assume seed texts resample like the pilot's; the genre
+# cells are treated by the 30-seed stand-in, which the subgroup block
+# reports (the per-axis component sits near 21 percent there, so no
+# within-cell per-axis verdict claims). Simulation uncertainty is about
+# one percentage point on each printed rate at 2,000 studies.
+
+# %%
+results.to_csv(DATA_DIR / "pub" / "power_sim_results.csv", index=False)
+print("wrote", DATA_DIR / "pub" / "power_sim_results.csv")
