@@ -119,7 +119,15 @@ def inspect_cell(cell_dir: Path, task: str, condition: str, *, hops: int,
 
 
 def run_nli_floor(report: dict, floor: float) -> dict:
-    """Score hop-1 NLI (seed -> hop) and add the floor flags to the report.
+    """Score hop-1 NLI (seed -> hop) and add floor flags to the report.
+
+    DIAGNOSTIC-ONLY (2026-10-31 decision): no rerun and no seed replacement
+    follows from the floor. The seed screen (duplicates, language/encoding,
+    length band, transcript continuity) runs before collection and is
+    task- and condition-independent; hop-1 entailment is logged and reported
+    descriptively, never triggering replacement, because it is a
+    fidelity-related, condition- and task-affected outcome ("take
+    inspiration" makes low entailment correct task behavior).
 
     Uses echochain.metrics_utils.entailment_consistency (DeBERTa-large-MNLI),
     the pilot's measure: entail_a_to_b = the seed entails the hop.
@@ -136,7 +144,7 @@ def run_nli_floor(report: dict, floor: float) -> dict:
     report["nli_floor"] = {
         "floor": floor,
         "scored_hops": len(report["hop1_samples_for_nli"]),
-        "flagged_rerun_pairs": flagged,
+        "flagged_rerun_pairs": flagged,  # legacy key name; diagnostic only
     }
     return report
 
@@ -157,7 +165,8 @@ def summarize(report: dict) -> str:
     if "nli_floor" in report:
         nli = report["nli_floor"]
         lines.append(f"NLI floor {nli['floor']}: {len(nli['flagged_rerun_pairs'])} "
-                     f"of {nli['scored_hops']} chain(s) flagged for a rerun")
+                     f"of {nli['scored_hops']} chain(s) flagged (diagnostic only; "
+                     f"no rerun or replacement)")
     return "\n".join(lines)
 
 
@@ -175,11 +184,13 @@ def qc_for_cell(model: str, task: str, condition: str, logs_root: Path,
             run_nli_floor(report, nli_floor)
         except ImportError:
             print("  (NLI model unavailable; report written without the floor)")
+    # The NLI floor contributes to the report but NOT to the cell verdict:
+    # hop-1 entailment is a fidelity-related, condition- and task-affected
+    # outcome, so a floor flag must not gate collection (2026-10-31 decision;
+    # see run_nli_floor).
     flagged = bool(report["incomplete_chains"] or report["pause_markers"]
                    or report["technical"]["flag_over_10pct"]
-                   or report.get("collapse", {}).get("flagged_seeds")
-                   or (report.get("nli_floor", {}).get("flagged_rerun_pairs")
-                       if not skip_nli else []))
+                   or report.get("collapse", {}).get("flagged_seeds"))
     payload = dict(report)
     if skip_nli:
         payload.pop("hop1_samples_for_nli", None)
