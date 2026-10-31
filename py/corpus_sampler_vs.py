@@ -28,17 +28,73 @@
 # %% [markdown]
 # # Confirmatory corpus sampler for the verbalized-sampling study
 #
-# This notebook/script implements the seed-corpus protocol in the paper. It
-# does not fetch live sources. It consumes frozen candidate manifests whose
-# rows already carry source metadata, license information, offsets, and any
-# automatic labels. The sampler checks the rows, enforces the locked quotas,
-# applies source contribution caps, draws final seeds and reserves with a
-# deterministic random seed, and writes audit tables.
+# This notebook/script implements the seed-corpus sampling protocol from the
+# paper. It is a **sampler**, not a source crawler. Running all cells in the
+# notebook only loads the functions and checks that the notebook executes; it
+# does not draw seeds unless you give it one or more frozen candidate
+# manifests.
+#
+# ## Required input
+#
+# The input is one or more candidate manifests produced upstream by a source
+# extraction/labeling workflow. Accepted formats are `.jsonl`, `.json`,
+# `.csv`, and `.tsv`. Each row is one candidate text and must already carry
+# source metadata, license information, offsets, and any automatic labels.
+# This sampler does not fetch Wikipedia revisions, novels, or transcripts.
+# Those source extractors still need to build the frozen manifests.
+#
+# Required columns for every row:
+#
+# ```text
+# text, band, genre, source_id, source_type, source_title,
+# source_date, license, offset, is_permissive, language
+# ```
+#
+# Additional required fields by source type:
+#
+# - Wikipedia/encyclopedic rows need `revision_id`,
+#   `revision_timestamp`, and `content_hash`.
+# - Dialogue rows need `dialogue_turns >= 2` and `turn_ids`, because the
+#   design uses contiguous multi-turn exchanges rather than isolated
+#   utterances.
+#
+# Typical optional label fields are `topic`, `syntax_label`, `tense_label`,
+# `temporal_reference`, and `auto_label_version`; the sampler preserves and
+# audits them when present.
+#
+# ## How to run it
+#
+# From a terminal, pass at least one manifest:
+#
+# ```bash
+# python py/corpus_sampler_vs.py #   --manifest /path/to/frozen_candidates.jsonl #   --outdir /home/user/Dropbox/data_export/echochains/corpus
+# ```
+#
+# For a small interface test, use lower quotas:
+#
+# ```bash
+# python py/corpus_sampler_vs.py #   --manifest /path/to/test_candidates.jsonl #   --outdir /tmp/opencode/corpus_sampler_test #   --quota 2 #   --reserve 1
+# ```
+#
+# From inside the notebook, call the same entry point explicitly:
+#
+# ```python
+# main([
+#     "--manifest", "/path/to/test_candidates.jsonl",
+#     "--outdir", "/tmp/opencode/corpus_sampler_test",
+#     "--quota", "2",
+#     "--reserve", "1",
+# ])
+# ```
+#
+# ## Output
 #
 # The output is a coverage-balanced test corpus, not a representative sample
-# of English. It has two sets: 90 short texts and 90 long texts. Each set
-# has 30 encyclopedic, 30 novel, and 30 dialogue seeds. The short dialogue
-# cell contains contiguous multi-turn exchanges, not isolated utterances.
+# of English. The final design has two sets: 90 short texts and 90 long
+# texts. Each set has 30 encyclopedic, 30 novel, and 30 dialogue seeds. The
+# script writes the final seeds, reserves, screen failures, draw rejections,
+# quota tables, source audits, label audits, and a sampler manifest to the
+# output directory.
 
 # %%
 from __future__ import annotations
