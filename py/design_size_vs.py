@@ -13,16 +13,29 @@ definition, whose transmitted distribution duplicates Direct), and VS
 from the confirmatory design for economy; no selection-rule hypothesis
 (old H4) is preregistered.
 
+DECODING (2026-10-31 decision, supersedes the locked 0.8/0.5): every model
+runs at its provider-recommended decoding. gpt-6-luna (Azure) exposes NO
+sampling parameters and runs at the vendor default; the open-weight arms
+use each vendor model card's temperature/top-p recommendation (Llama-3.1-8B
+0.6/0.9; Qwen3-32B non-thinking 0.7/0.8; Gemma-3-27b-it 1.0/0.95), with
+top-k and repetition penalties excluded everywhere. Only the temperature +
+top-p pair is set. Token estimates are unaffected (decode-dependent length
+differences are small relative to the current ASSUMED margins).
+
 Token counts split into MEASURED (exploratory pilot, vs_weighted logs,
 2026-10-30 session) and ASSUMED. The ASSUMED entries are the dominant
 uncertainty: expand+compress runs on the 100-200-word long-text band, which
-the pilot never ran, so its response lengths are guesses. The planned small
-long-text pilot replaces them; re-run this script after that pilot.
+the pilot never ran. The planned small long-text pilot replaces them; the
+2026-10-31 gpt-6-luna validation run measured the long-band JOINT outputs
+~80% BELOW these assumptions (VS expand 728 vs assumed 1325 per-call output)
+on fixture seeds, so treat the expand+compress USD column as a conservative
+overestimate.
 
-Prices: Luna list 0.20/1.20 USD per M tokens. The Azure global-batch
-discount is ASSUMED at 50% and must be verified before the budget line is
-quoted. Only the Luna runs cost API money; the open-weight panel models run
-on the Vienna cluster.
+Prices: gpt-6-luna list prices UNKNOWN as of 2026-10-31 (the published
+0.20/1.20 USD per M belong to gpt-5.6-luna; kept as placeholders ONLY until
+the portal check). The Azure global-batch discount is ASSUMED at 50% and
+must be verified before the budget line is quoted. Only the luna runs cost
+API money; the open-weight panel models run on the Vienna cluster.
 
 Run:  python py/design_size_vs.py            (defaults = locked design)
       python py/design_size_vs.py --csv PATH (also write a CSV breakdown)
@@ -56,7 +69,8 @@ SEEDS_PER_TASK = 90   # 90x5 lock (2026-10-30): 30 seeds per genre; shared sente
 CHAINS = 5            # budget-neutral with the earlier 50x9 candidate (450 chains per
                       # condition per task), so totals and costs are unchanged
 HOPS = 200            # transmitted texts; the hop-0 seed is not transmitted
-PANEL_MODELS = 4      # Luna + Llama-3-8B + Qwen-27B + Gemma-27B (names TBD)
+PANEL_MODELS = 4      # gpt-6-luna (Azure) + Llama-3.1-8B + Qwen3-32B +
+                      # Gemma-3-27b-it, 27B-class bf16 (names pinned 2026-10-31)
 VS_K = 5
 
 # --- token assumptions -------------------------------------------------------
@@ -102,8 +116,10 @@ TASK_BAND = {
 }
 
 # --- prices -------------------------------------------------------------------
-LUNA_IN_PRICE = 0.20    # USD per M tokens, list
-LUNA_OUT_PRICE = 1.20   # USD per M tokens, list
+# gpt-6-luna list prices are UNKNOWN (2026-10-31): the constants below are the
+# gpt-5.6-luna prices kept as placeholders until the Azure portal check.
+LUNA_IN_PRICE = 0.20    # USD per M tokens, PLACEHOLDER (gpt-5.6-luna value)
+LUNA_OUT_PRICE = 1.20   # USD per M tokens, PLACEHOLDER (gpt-5.6-luna value)
 BATCH_DISCOUNT = 0.50   # ASSUMED; verify the Azure global-batch discount
 USD_PER_EUR = 0.92      # ASSUMED conversion
 
@@ -185,11 +201,12 @@ def main() -> None:
     print(f"{'PER MODEL total':<{widths[0]+widths[1]}}{tr:>{widths[2]},}{cl:>{widths[3]},}"
           f"{it/1e6:>{widths[4]}.1f}{ot/1e6:>{widths[5]}.1f}{usd:>{widths[6]}.2f}")
     print(f"\nPanel: {PANEL_MODELS} models -> transmitted {tr*PANEL_MODELS:,}, "
-          f"prompt calls {cl*PANEL_MODELS:,}. Only Luna is billed; the open-weight "
-          f"models run on the Vienna cluster.")
-    print(f"Luna list: {usd:,.0f} USD ~ {usd*USD_PER_EUR:,.0f} EUR; "
-          f"with batch x{BATCH_DISCOUNT}: {usd*BATCH_DISCOUNT*USD_PER_EUR:,.0f} EUR "
-          f"(discount ASSUMED, verify with Azure).")
+          f"prompt calls {cl*PANEL_MODELS:,}. Only gpt-6-luna is billed; the "
+          f"open-weight models run on the Vienna cluster.")
+    print(f"gpt-6-luna list (PLACEHOLDER gpt-5.6 prices): {usd:,.0f} USD ~ "
+          f"{usd*USD_PER_EUR:,.0f} EUR; with batch x{BATCH_DISCOUNT}: "
+          f"{usd*BATCH_DISCOUNT*USD_PER_EUR:,.0f} EUR (prices UNKNOWN: verify "
+          f"in the portal; discount ASSUMED, verify with Azure).")
     print(f"\nCost share expand+compress: "
           f"{sum(r['usd'] for r in rows if r['task']=='expand+compress')/usd:.0%} "
           f"(dominated by ASSUMED long-text VS response lengths).")

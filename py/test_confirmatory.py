@@ -723,6 +723,35 @@ def test_qc_clean_cell_exits_zero():
     assert (tmp / "qc" / "qc_paraphrase-direct.json").exists()
 
 
+def test_decode_resolution():
+    """The vendor table and override precedence resolve correctly."""
+    from generate_chains_confirmatory import resolve_decoding, VENDOR_DECODE
+    assert resolve_decoding("gpt-6-luna", "vendor") == {}
+    assert resolve_decoding("Qwen/Qwen3-32B", "vendor") == \
+        {"temperature": 0.7, "top_p": 0.8}
+    assert resolve_decoding("meta-llama/Llama-3.1-8B-Instruct", "vendor") == \
+        {"temperature": 0.6, "top_p": 0.9}
+    assert resolve_decoding("google/gemma-3-27b-it", "vendor") == \
+        {"temperature": 1.0, "top_p": 0.95}
+    # explicit overrides beat everything and must be given together
+    assert resolve_decoding("gpt-6-luna", "vendor",
+                            temperature=0.5, top_p=0.5) == \
+        {"temperature": 0.5, "top_p": 0.5}
+    try:
+        resolve_decoding("some-unpinned-model", "vendor")
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+    try:
+        resolve_decoding("some-unpinned-model", "default", temperature=0.5)
+        raise AssertionError("expected ValueError (top-p missing)")
+    except ValueError:
+        pass
+    assert sorted(VENDOR_DECODE) == [
+        "Qwen/Qwen3-32B", "google/gemma-3-27b-it", "gpt-6-luna",
+        "meta-llama/Llama-3.1-8B-Instruct"]
+
+
 TESTS = [
     test_registry_matches_canonical,
     test_prompt_templates_intact,
@@ -754,6 +783,7 @@ TESTS = [
     test_default_decoding_omits_parameters,
     test_qc_inspect_cell,
     test_qc_clean_cell_exits_zero,
+    test_decode_resolution,
 ]
 
 

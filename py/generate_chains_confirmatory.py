@@ -3,14 +3,19 @@
 Runs the locked three-condition design (Direct, uniform-list joint control,
 verbalized sampling) x four tasks (paraphrase, improve, take inspiration,
 expand+compress) with 90 seeds x 5 chains x 200 transmitted hops per
-task-per-condition cell. The locked decoding is temperature 0.8 / top-p 0.5
-(--decoding locked); models that expose no sampling parameters (gpt-6-luna on
-Azure, verified 2026-10-31: temperature != 1 is an unsupported value and top_p
-is an unsupported parameter on chat.completions AND the Responses API,
-api-versions 2024-12-01-preview and 2025-04-01-preview) run with
---decoding default, which sends no sampling arguments and records
-temperature: null / top_p: null / decoding: model_default in the logs. The
-exploratory pilot script `generate_chains_vs.py` stays untouched as the
+task-per-condition cell. DECODING (2026-10-31 decision): every model runs
+at its provider-recommended settings, temperature and top-p only (top-k and
+repetition penalties excluded). gpt-6-luna (Azure) exposes NO sampling
+parameters (verified 2026-10-31: temperature != 1 is an unsupported value
+and top_p is an unsupported parameter on chat.completions AND the Responses
+API, api-versions 2024-12-01-preview and 2025-04-01-preview); it runs at
+the vendor default. VENDOR_DECODE holds the pinned panel's values
+(Llama-3.1-8B 0.6/0.9, Qwen3-32B non-thinking 0.7/0.8, Gemma-3-27b-it
+1.0/0.95; card unverified entries are marked VERIFY AT EXECUTION there).
+--decoding vendor (the design default) resolves per model; --decoding
+default sends no sampling arguments (recorded as model_default); --decoding
+locked is the pilot-matching 0.8/0.5 pair for exploratory-style reruns.
+The exploratory pilot script `generate_chains_vs.py` stays untouched as the
 exploratory record.
 
 ONE call per hop stage. Direct sends its single-turn instruction and
@@ -125,9 +130,58 @@ TASK_BANDS = {
     "expand+compress": "long",
 }
 DECODING = {"locked": {"temperature": 0.8, "top_p": 0.5},
-            "default": {}}  # gpt-6-luna supports NO sampling parameters;
-                            # validated 2026-10-31 (400 unsupported_value /
-                            # unsupported_parameter on both APIs)
+            "default": {}}  # no sampling parameters sent
+# Vendor-recommended decoding per pinned panel model (2026-10-31 decision:
+# every model runs at its provider's recommended settings; temperature and
+# top-p ONLY, top-k and repetition penalties excluded everywhere; verified
+# against the official sources except where noted).
+#   gpt-6-luna: NO sampling parameters exist (verified 2026-10-31 on both
+#               chat.completions and the Responses API).
+#   Llama-3.1:  Meta's model card recommendation (0.6/0.9); verify the
+#   Qwen3-32B:  VERIFIED 2026-10-31 (official card, non-thinking mode).
+#   Gemma-3:    Google's model card (1.0/0.95); repo gated here, verify the
+#               card value at execution.
+VENDOR_DECODE = {
+    "gpt-6-luna": {},
+    "meta-llama/Llama-3.1-8B-Instruct": {"temperature": 0.6, "top_p": 0.9},
+    "Qwen/Qwen3-32B": {"temperature": 0.7, "top_p": 0.8},
+    "google/gemma-3-27b-it": {"temperature": 1.0, "top_p": 0.95},
+}
+VENDOR_DECODE_SOURCE = {
+    "gpt-6-luna": "vendor constraint (no parameters), verified 2026-10-31",
+    "meta-llama/Llama-3.1-8B-Instruct": "Meta model card; VERIFY AT EXECUTION",
+    "Qwen/Qwen3-32B": "Qwen model card non-thinking mode; verified 2026-10-31",
+    "google/gemma-3-27b-it": "Google Gemma 3 card; VERIFY AT EXECUTION",
+}
+
+
+def resolve_decoding(model: str, mode: str | None = None,
+                     temperature: float | None = None,
+                     top_p: float | None = None) -> dict:
+    """Decoding parameters for one model from CLI arguments.
+
+    Precedence: explicit --temperature/--top-p overrides everything (both
+    must be given together); --decoding vendor uses VENDOR_DECODE (models
+    outside the pinned table are rejected unless explicit values are given);
+    --decoding default sends no sampling parameters; --decoding locked is
+    the pilot-matching 0.8/0.5 pair (kept for exploratory-style reruns;
+    NOT the confirmatory design's decoding).
+    """
+    if (temperature is None) != (top_p is None):
+        raise ValueError("--temperature and --top-p must be given together")
+    if temperature is not None:
+        if not (0.0 < temperature <= 2.0 and 0.0 < top_p <= 1.0):
+            raise ValueError(f"out-of-range sampling values: "
+                             f"temperature={temperature}, top_p={top_p}")
+        return {"temperature": temperature, "top_p": top_p}
+    mode = mode or "vendor"
+    if mode == "vendor":
+        if model not in VENDOR_DECODE:
+            raise ValueError(f"model {model!r} is outside the pinned panel; "
+                             f"give explicit --temperature/--top-p or add it "
+                             f"to VENDOR_DECODE with its card source")
+        return dict(VENDOR_DECODE[model])
+    return dict(DECODING[mode])
 
 
 # ---------------------------------------------------------------------------
@@ -782,12 +836,18 @@ def main(argv=None) -> int:
     parser.add_argument("--replicate", type=int, default=0)
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--partial-flush-every", type=int, default=25)
-    parser.add_argument("--decoding", choices=tuple(DECODING),
-                        default="locked",
-                        help="locked = temperature 0.8 / top-p 0.5 (the "
-                             "design lock); default = no sampling parameters "
-                             "(gpt-6-luna accepts none; recorded as "
-                             "model_default in the logs)")
+    parser.add_argument("--decoding", choices=("vendor", "default", "locked"),
+                        default="vendor",
+                        help="vendor = the pinned panel model's recommended "
+                             "settings (design default; VENDOR_DECODE table); "
+                             "default = no sampling parameters (model "
+                             "default); locked = the pilot-matching 0.8/0.5 "
+                             "pair (exploratory-style reruns only)")
+    parser.add_argument("--temperature", type=float,
+                        help="explicit override (needs --top-p; overrides "
+                             "--decoding)")
+    parser.add_argument("--top-p", type=float,
+                        help="explicit override (needs --temperature)")
     parser.add_argument("--limit-seeds", type=int)
     parser.add_argument("--limit-chains", type=int)
     parser.add_argument("--limit-hops", type=int)
@@ -824,6 +884,16 @@ def main(argv=None) -> int:
                       if args.cache_root
                       else get_data_dir() / "data" / "echodrift_confirmatory_cache")
 
+    try:
+        decoding = resolve_decoding(args.model, args.decoding,
+                                    args.temperature, args.top_p)
+    except ValueError as exc:
+        parser.error(str(exc))
+    print(f"decoding for {args.model}: {decoding or 'model default (none sent)'}"
+          + (f" [{VENDOR_DECODE_SOURCE.get(args.model, 'explicit')}]"
+             if args.temperature is None and args.model in VENDOR_DECODE_SOURCE
+             else ""))
+
     backend = build_backend(args.backend)
     try:
         for task, condition in cells:
@@ -836,7 +906,7 @@ def main(argv=None) -> int:
                      limit_seeds=args.limit_seeds,
                      limit_chains=args.limit_chains,
                      limit_hops=args.limit_hops,
-                     decoding=DECODING[args.decoding])
+                     decoding=decoding)
     except CellPaused as exc:
         # pause-and-inspect: the marker file documents the failing position;
         # rerunning the same command resumes from cache and chain logs.
