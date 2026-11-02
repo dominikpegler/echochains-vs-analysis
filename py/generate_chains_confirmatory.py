@@ -10,7 +10,7 @@ parameters (verified 2026-10-31: temperature != 1 is an unsupported value
 and top_p is an unsupported parameter on chat.completions AND the Responses
 API, api-versions 2024-12-01-preview and 2025-04-01-preview); it runs at
 the vendor default. VENDOR_DECODE holds the pinned panel's values
-(Llama-3.1-8B 0.6/0.9, Qwen3-32B non-thinking 0.7/0.8, Gemma-3-27b-it
+(Llama-3.1-8B 0.6/0.9, Qwen3-32B non-thinking 0.7/0.8, gemma-4-31B-it
 1.0/0.95; card unverified entries are marked VERIFY AT EXECUTION there).
 --decoding vendor (the design default) resolves per model; --decoding
 default sends no sampling arguments (recorded as model_default); --decoding
@@ -139,19 +139,22 @@ DECODING = {"locked": {"temperature": 0.8, "top_p": 0.5},
 #               chat.completions and the Responses API).
 #   Llama-3.1:  Meta's model card recommendation (0.6/0.9); verify the
 #   Qwen3-32B:  VERIFIED 2026-10-31 (official card, non-thinking mode).
-#   Gemma-3:    Google's model card (1.0/0.95); repo gated here, verify the
-#               card value at execution.
+#   gemma-4-31B-it: VERIFIED 2026-11-02 (Gemma 4 model card: temperature
+#               1.0, top_p 0.95; the card's top_k 64 is excluded by the
+#               no-top-k rule). Thinking disabled (drop the <|think|>
+#               token from the system prompt); non-thinking runs emit an
+#               empty thought block. Apache 2.0, ungated.
 VENDOR_DECODE = {
     "gpt-6-luna": {},
     "meta-llama/Llama-3.1-8B-Instruct": {"temperature": 0.6, "top_p": 0.9},
     "Qwen/Qwen3-32B": {"temperature": 0.7, "top_p": 0.8},
-    "google/gemma-3-27b-it": {"temperature": 1.0, "top_p": 0.95},
+    "google/gemma-4-31B-it": {"temperature": 1.0, "top_p": 0.95},
 }
 VENDOR_DECODE_SOURCE = {
     "gpt-6-luna": "vendor constraint (no parameters), verified 2026-10-31",
     "meta-llama/Llama-3.1-8B-Instruct": "Meta model card; VERIFY AT EXECUTION",
     "Qwen/Qwen3-32B": "Qwen model card non-thinking mode; verified 2026-10-31",
-    "google/gemma-3-27b-it": "Google Gemma 3 card; VERIFY AT EXECUTION",
+    "google/gemma-4-31B-it": "Google Gemma 4 card; verified 2026-11-02",
 }
 
 

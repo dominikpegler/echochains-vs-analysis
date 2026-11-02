@@ -17,7 +17,7 @@ DECODING (2026-10-31 decision, supersedes the locked 0.8/0.5): every model
 runs at its provider-recommended decoding. gpt-6-luna (Azure) exposes NO
 sampling parameters and runs at the vendor default; the open-weight arms
 use each vendor model card's temperature/top-p recommendation (Llama-3.1-8B
-0.6/0.9; Qwen3-32B non-thinking 0.7/0.8; Gemma-3-27b-it 1.0/0.95), with
+0.6/0.9; Qwen3-32B non-thinking 0.7/0.8; gemma-4-31B-it 1.0/0.95), with
 top-k and repetition penalties excluded everywhere. Only the temperature +
 top-p pair is set. Token estimates are unaffected (decode-dependent length
 differences are small relative to the current ASSUMED margins).
@@ -77,7 +77,7 @@ CHAINS = 5            # budget-neutral with the earlier 50x9 candidate (450 chai
                       # condition per task), so totals and costs are unchanged
 HOPS = 200            # transmitted texts; the hop-0 seed is not transmitted
 PANEL_MODELS = 4      # gpt-6-luna (Azure) + Llama-3.1-8B + Qwen3-32B +
-                      # Gemma-3-27b-it, 27B-class bf16 (names pinned 2026-10-31)
+                      # gemma-4-31B-it, 31B-class bf16 (names pinned 2026-10-31, Gemma 4 swap 2026-11-02)
 VS_K = 5
 
 # --- token assumptions -------------------------------------------------------

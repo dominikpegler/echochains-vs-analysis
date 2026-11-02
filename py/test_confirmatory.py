@@ -731,7 +731,7 @@ def test_decode_resolution():
         {"temperature": 0.7, "top_p": 0.8}
     assert resolve_decoding("meta-llama/Llama-3.1-8B-Instruct", "vendor") == \
         {"temperature": 0.6, "top_p": 0.9}
-    assert resolve_decoding("google/gemma-3-27b-it", "vendor") == \
+    assert resolve_decoding("google/gemma-4-31B-it", "vendor") == \
         {"temperature": 1.0, "top_p": 0.95}
     # explicit overrides beat everything and must be given together
     assert resolve_decoding("gpt-6-luna", "vendor",
@@ -748,7 +748,7 @@ def test_decode_resolution():
     except ValueError:
         pass
     assert sorted(VENDOR_DECODE) == [
-        "Qwen/Qwen3-32B", "google/gemma-3-27b-it", "gpt-6-luna",
+        "Qwen/Qwen3-32B", "google/gemma-4-31B-it", "gpt-6-luna",
         "meta-llama/Llama-3.1-8B-Instruct"]
 
 
