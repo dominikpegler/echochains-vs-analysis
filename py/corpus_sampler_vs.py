@@ -67,8 +67,11 @@
 # From a terminal, pass at least one manifest:
 #
 # ```bash
-# python py/corpus_sampler_vs.py #   --manifest /path/to/frozen_candidates.jsonl #   --outdir /home/user/Dropbox/data_export/echochains/corpus
+# python py/corpus_sampler_vs.py #   --manifest /path/to/frozen_candidates.jsonl
 # ```
+#
+# The default output directory is `$DATA_DIR/data/corpus/sampler`; pass
+# `--outdir` to change it.
 #
 # For a small interface test, use lower quotas:
 #
@@ -104,8 +107,17 @@ import csv
 import hashlib
 import json
 import math
+import os
 import random
 import re
+
+import nltk
+
+try:  # one-time local setup for the length rule
+    nltk.word_tokenize("A test sentence.")
+except LookupError:
+    nltk.download("punkt", quiet=True)
+    nltk.download("punkt_tab", quiet=True)
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -223,7 +235,10 @@ def collapse_ws(text: str) -> str:
 
 
 def word_count(text: str) -> int:
-    return len(re.findall(r"\S+", text))
+    # Length rule frozen with the manifest builder: NLTK word_tokenize
+    # token counts, matching the paper's delta-token/length metric
+    # (echochains-core metrics_utils.token_len).
+    return len(nltk.word_tokenize(text))
 
 
 def text_hash(text: str) -> str:
@@ -275,8 +290,15 @@ def screen_reason(row: pd.Series) -> str:
         reasons.append("empty_text")
     if row.get("language") not in {"en", "eng", "english"}:
         reasons.append("language_not_english")
+    # The permissive-license promise covers the encyclopedic and fiction
+    # cells. Dialogue sources (film transcripts) may be restricted-license
+    # material, but their license string must be documented.
     if not row.get("is_permissive"):
-        reasons.append("license_not_permissive")
+        if row.get("genre") == "dialogue":
+            if not str(row.get("license", "")).strip():
+                reasons.append("license_not_documented")
+        else:
+            reasons.append("license_not_permissive")
     band = row.get("band")
     if band not in BANDS:
         reasons.append("bad_band")
@@ -473,7 +495,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--manifest", action="append", type=Path, required=True,
                     help="candidate manifest (.jsonl, .json, .csv, .tsv); repeatable")
     ap.add_argument("--outdir", type=Path,
-                    default=Path("/home/user/Dropbox/data_export/echochains/corpus"))
+                    default=None,
+                    help="output directory (default: $DATA_DIR/data/corpus/sampler)")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     ap.add_argument("--quota", type=int, default=QUOTA_PER_CELL)
     ap.add_argument("--reserve", type=int, default=RESERVE_PER_CELL)
@@ -484,13 +507,17 @@ def main(argv: list[str] | None = None) -> None:
     cfg = DrawConfig(seed=args.seed, quota_per_cell=args.quota,
                      reserve_per_cell=args.reserve, source_cap=args.source_cap,
                      author_cap=args.author_cap)
+    outdir = args.outdir
+    if outdir is None:
+        base = os.environ.get("DATA_DIR", str(Path.home() / "Dropbox/data_export/echochains"))
+        outdir = Path(base).expanduser() / "data" / "corpus" / "sampler"
     raw = load_candidates(args.manifest)
     screened = apply_screen(raw)
     selected, reserves, rejects = draw_corpus(screened, cfg)
-    write_outputs(selected, reserves, rejects, screened, args.outdir, cfg)
+    write_outputs(selected, reserves, rejects, screened, outdir, cfg)
     print("selected")
     print(quota_table(selected).to_string())
-    print(f"wrote {args.outdir}")
+    print(f"wrote {outdir}")
 
 
 if __name__ == "__main__" and "__file__" in globals():
