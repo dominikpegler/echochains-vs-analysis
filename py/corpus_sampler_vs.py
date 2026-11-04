@@ -282,12 +282,17 @@ def load_candidates(paths: list[Path]) -> pd.DataFrame:
 # from the reserve list under the same quota.
 
 # %%
+ARTIFACT_RE = re.compile(r"\[\[|\]\]|\{\{|\}\}|\|thumb|\bFile:|\bImage:|\bCategory:|\bTemplate:")
+
+
 def screen_reason(row: pd.Series) -> str:
     reasons: list[str] = []
     if row.get("_missing"):
         reasons.append("missing_required_metadata")
     if not row.get("text"):
         reasons.append("empty_text")
+    if row.get("text") and ARTIFACT_RE.search(str(row.get("text"))):
+        reasons.append("extraction_artifact")
     if row.get("language") not in {"en", "eng", "english"}:
         reasons.append("language_not_english")
     # The permissive-license promise covers the encyclopedic and fiction
