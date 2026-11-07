@@ -8,7 +8,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.17.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -41,7 +41,11 @@
 # `.csv`, and `.tsv`. Each row is one candidate text and must already carry
 # source metadata, license information, offsets, and any automatic labels.
 # This sampler does not fetch Wikipedia revisions, novels, or transcripts.
-# Those source extractors still need to build the frozen manifests.
+# The frozen manifest for the confirmatory study exists at
+# `$DATA_DIR/data/corpus/vs_candidate_manifest.jsonl` (built 2026-11-07;
+# 3,104,430 candidates; the article sample and its titles are recorded in
+# the audit), so the draw can run as soon as the human label validation
+# passes.
 #
 # Required columns for every row:
 #
@@ -67,7 +71,7 @@
 # From a terminal, pass at least one manifest:
 #
 # ```bash
-# python py/corpus_sampler_vs.py #   --manifest /path/to/frozen_candidates.jsonl
+# python py/corpus_sampler_vs.py --manifest /path/to/frozen_candidates.jsonl
 # ```
 #
 # The default output directory is `$DATA_DIR/data/corpus/sampler`; pass
@@ -76,10 +80,13 @@
 # For a small interface test, use lower quotas:
 #
 # ```bash
-# python py/corpus_sampler_vs.py #   --manifest /path/to/test_candidates.jsonl #   --outdir /tmp/opencode/corpus_sampler_test #   --quota 2 #   --reserve 1
+# python py/corpus_sampler_vs.py --manifest /path/to/test_candidates.jsonl \
+#   --outdir /tmp/opencode/corpus_sampler_test --quota 2 --reserve 1
 # ```
 #
-# From inside the notebook, call the same entry point explicitly:
+# Inside the notebook, the workflow cells at the end of this file run the
+# same entry point with the frozen paths; a terminal gives the identical
+# call:
 #
 # ```python
 # main([
@@ -95,9 +102,10 @@
 # The output is a coverage-balanced test corpus, not a representative sample
 # of English. The final design has two sets: 90 short texts and 90 long
 # texts. Each set has 30 encyclopedic, 30 novel, and 30 dialogue seeds. The
-# script writes the final seeds, reserves, screen failures, draw rejections,
-# quota tables, source audits, label audits, and a sampler manifest to the
-# output directory.
+# genre label `novel` here is the pipeline's internal code; the paper calls
+# this genre fiction. The script writes the final seeds, reserves, screen
+# failures, draw rejections, quota tables, source audits, label audits, and
+# a sampler manifest to the output directory.
 
 # %%
 from __future__ import annotations
@@ -264,15 +272,121 @@ def normalize_row(row: dict[str, Any], source_file: str, row_index: int) -> dict
         out.setdefault(field, "")
     return out
 
+# %% [markdown]
+# ## Streaming load, screen, and draw for large manifests
+#
+# The frozen confirmatory manifest is 3.7 GB (3,104,430 rows). The
+# full-load path (`pd.read_json` or `read_text` + DataFrame) exceeds RAM.
+# The functions below stream the manifest in two passes, one per band
+# ("short" first, then "long"): each pass normalizes rows one line at a
+# time with identical order, indices, and normalization to the old
+# full-load path, retains only its band's passing rows, and draws that
+# band's cells in the canonical order with the shared rng and the
+# cross-band duplicate set, so the selected, reserve, and rejection
+# outputs match the full-load semantics exactly. Invalid-band rows are
+# collected on the first pass, and the screen-failure audit is the union
+# of both passes. The `.json`, `.csv`, and `.tsv` branches load in full
+# (small sources) via `read_manifest`.
 
-def load_candidates(paths: list[Path]) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
+# %%
+def stream_norm_rows(paths: list[Path]):
     for path in paths:
-        for i, row in enumerate(read_manifest(path)):
-            rows.append(normalize_row(row, str(path), i))
-    if not rows:
-        raise ValueError("no candidate rows loaded")
-    return pd.DataFrame(rows)
+        if path.suffix.lower() == ".jsonl":
+            i = 0
+            with path.open("r", encoding="utf-8") as fp:
+                for line in fp:
+                    if not line.strip():
+                        continue
+                    yield normalize_row(json.loads(line), str(path), i)
+                    i += 1
+        else:
+            for i, row in enumerate(read_manifest(path)):
+                yield normalize_row(row, str(path), i)
+
+
+def screen_and_group(paths: list[Path], phase: str,
+                     hash_counter: Counter[str]) -> tuple[dict, pd.DataFrame, int]:
+    """One streaming pass over the manifest for one phase ("short" or
+    "long"). Rows of the phase's band are screened, grouped, and retained;
+    the other phase's band rows are skipped except for two bookkeeping
+    duties done on the first pass only (phase == "short"): counting
+    `n_screened` and the full-manifest hash counter, so
+    `duplicate_hash_count` keeps its whole-manifest semantics without being
+    counted twice. Rows whose band is invalid are collected on the "short"
+    pass, so the two passes partition the manifest and the screen-failure
+    audit loses nothing. Retaining one band at a time keeps peak memory near
+    that band's passing rows instead of the whole pool."""
+    if phase not in BANDS:
+        raise ValueError(f"phase must be a band: {sorted(BANDS)}")
+    first = phase == "short"
+    cells: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    fails: list[dict[str, Any]] = []
+    n_before = 0
+    for row in stream_norm_rows(paths):
+        if first:
+            n_before += 1
+            hash_counter[row["text_hash"]] += 1
+        band = row["band"]
+        if band != phase and not (phase == "short" and band not in BANDS):
+            continue
+        reason = screen_reason(row)
+        row["screen_reason"] = reason
+        row["screen_pass"] = reason == ""
+        if row["screen_pass"] and row["band"] in BANDS and row["genre"] in GENRES:
+            cells.setdefault((row["band"], row["genre"]), []).append(row)
+        else:
+            fails.append(row)
+    for rows in cells.values():
+        for row in rows:
+            row["duplicate_hash_count"] = hash_counter[row["text_hash"]]
+    for row in fails:
+        row["duplicate_hash_count"] = hash_counter[row["text_hash"]]
+    fails_df = pd.DataFrame(fails) if fails else pd.DataFrame()
+    return cells, fails_df, n_before
+
+
+def draw_corpus_stream(paths: list[Path], cfg: DrawConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, int]:
+    """Draw the confirmatory seed set from large manifests without loading
+    them fully. Two streaming passes over the manifest, one per band
+    (short first, then long), each retaining only that band's passing rows,
+    so peak memory stays near one band instead of the whole pool; the draw
+    runs the canonical per-cell draws in the fixed cell order with one
+    shared rng and one cross-band `global_hashes` set, exactly as the
+    full-load semantics prescribe. Returns
+    (selected, reserves, rejects, screen_failures, n_screened)."""
+    hash_counter: Counter[str] = Counter()
+    rng = random.Random(cfg.seed)
+    global_hashes: set[str] = set()
+    selected_rows: list[dict[str, Any]] = []
+    reserve_rows: list[dict[str, Any]] = []
+    reject_rows: list[dict[str, Any]] = []
+    fail_frames: list[pd.DataFrame] = []
+    n_screened = 0
+    for phase in ("short", "long"):
+        cells, fails_df, n_this = screen_and_group(paths, phase, hash_counter)
+        if phase == "short":
+            n_screened = n_this
+        fail_frames.append(fails_df)
+        for genre in GENRES:
+            frame = pd.DataFrame(cells.get((phase, genre), []))
+            sel, res, rej = draw_cell(frame, phase, genre, cfg, rng,
+                                      global_hashes)
+            selected_rows.extend(frame.loc[sel].to_dict(orient="records"))
+            reserve_rows.extend(frame.loc[res].to_dict(orient="records"))
+            reject_rows.extend(rej)
+            del frame
+            cells.pop((phase, genre), None)
+    selected = pd.DataFrame(selected_rows)
+    reserves = pd.DataFrame(reserve_rows)
+    selected["set"] = selected["band"].map({"short": "short_text", "long": "long_text"})
+    order = selected.groupby(["band", "genre"]).cumcount() + 1
+    selected["seed_id"] = [seed_id(b, g, int(n))
+                            for b, g, n in zip(selected["band"],
+                                               selected["genre"], order - 1)]
+    reserves["reserve_id"] = [f"RES_{i+1:04d}" for i in range(len(reserves))]
+    fail_all = pd.concat(fail_frames, ignore_index=True) if any(
+        len(f) for f in fail_frames) else pd.DataFrame()
+    return selected, reserves, pd.DataFrame(reject_rows), fail_all, n_screened
 
 # %% [markdown]
 # ## Seed screen
@@ -329,16 +443,6 @@ def screen_reason(row: pd.Series) -> str:
         if not str(row.get("content_hash", "")).strip():
             reasons.append("wiki_missing_content_hash")
     return ";".join(reasons)
-
-
-def apply_screen(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out["screen_reason"] = out.apply(screen_reason, axis=1)
-    out["screen_pass"] = out["screen_reason"].eq("")
-    # Duplicate text hashes fail after the first randomly ordered row later;
-    # here we only mark the duplicate group size for auditing.
-    out["duplicate_hash_count"] = out.groupby("text_hash")["text_hash"].transform("size")
-    return out
 
 # %% [markdown]
 # ## Deterministic draw
@@ -412,29 +516,6 @@ def draw_cell(df: pd.DataFrame, band: str, genre: str, cfg: DrawConfig,
     return selected, reserve, rejects
 
 
-def draw_corpus(df: pd.DataFrame, cfg: DrawConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    rng = random.Random(cfg.seed)
-    global_hashes: set[str] = set()
-    selected_idx: list[int] = []
-    reserve_idx: list[int] = []
-    reject_rows: list[dict[str, Any]] = []
-    for band in ("short", "long"):
-        for genre in GENRES:
-            sel, res, rej = draw_cell(df, band, genre, cfg, rng, global_hashes)
-            selected_idx.extend(sel)
-            reserve_idx.extend(res)
-            reject_rows.extend(rej)
-    selected = df.loc[selected_idx].copy().reset_index(drop=True)
-    reserves = df.loc[reserve_idx].copy().reset_index(drop=True)
-    selected["set"] = selected["band"].map({"short": "short_text", "long": "long_text"})
-    order = selected.groupby(["band", "genre"]).cumcount() + 1
-    selected["seed_id"] = [seed_id(b, g, int(n))
-                            for b, g, n in zip(selected["band"],
-                                               selected["genre"], order - 1)]
-    reserves["reserve_id"] = [f"RES_{i+1:04d}" for i in range(len(reserves))]
-    return selected, reserves, pd.DataFrame(reject_rows)
-
-
 def seed_id(band: str, genre: str, i: int) -> str:
     b = "S" if band == "short" else "L"
     g = {"encyclopedic": "ENC", "novel": "NOV", "dialogue": "DIA"}[genre]
@@ -467,7 +548,8 @@ def label_audit(df: pd.DataFrame) -> dict[str, dict[str, int]]:
 
 
 def write_outputs(selected: pd.DataFrame, reserves: pd.DataFrame, rejects: pd.DataFrame,
-                  screened: pd.DataFrame, outdir: Path, cfg: DrawConfig) -> None:
+                  screen_failures: pd.DataFrame, outdir: Path, cfg: DrawConfig,
+                  n_screened: int) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     selected_cols = [c for c in OUT_FIELDS if c in selected.columns]
     reserve_cols = ["reserve_id"] + [c for c in OUT_FIELDS if c in reserves.columns and c != "seed_id"]
@@ -478,9 +560,11 @@ def write_outputs(selected: pd.DataFrame, reserves: pd.DataFrame, rejects: pd.Da
     quota_table(selected).to_csv(outdir / "quota_table.csv")
     source_audit(selected).to_csv(outdir / "source_audit.csv", index=False)
     rejects.to_csv(outdir / "draw_rejections.csv", index=False)
-    screened.loc[~screened["screen_pass"]].to_csv(outdir / "screen_failures.csv", index=False)
+    screen_failures.to_csv(outdir / "screen_failures.csv", index=False)
     meta = {
         "config": asdict(cfg),
+        "n_screened": int(n_screened),
+        "n_screen_failures": int(len(screen_failures)),
         "n_selected": int(len(selected)),
         "n_reserve": int(len(reserves)),
         "quota_table": quota_table(selected).to_dict(),
@@ -516,10 +600,8 @@ def main(argv: list[str] | None = None) -> None:
     if outdir is None:
         base = os.environ.get("DATA_DIR", str(Path.home() / "Dropbox/data_export/echochains"))
         outdir = Path(base).expanduser() / "data" / "corpus" / "sampler"
-    raw = load_candidates(args.manifest)
-    screened = apply_screen(raw)
-    selected, reserves, rejects = draw_corpus(screened, cfg)
-    write_outputs(selected, reserves, rejects, screened, outdir, cfg)
+    selected, reserves, rejects, screen_failures, n_screened = draw_corpus_stream(args.manifest, cfg)
+    write_outputs(selected, reserves, rejects, screen_failures, outdir, cfg, n_screened)
     print("selected")
     print(quota_table(selected).to_string())
     print(f"wrote {outdir}")
@@ -527,3 +609,63 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__" and "__file__" in globals():
     main()
+
+# %% [markdown]
+# ## Workflow: draw the confirmatory seed set
+#
+# The draw runs ONCE, after the human label validation has passed and the
+# label rules are frozen (dropping or merging label categories would change
+# the screen, so it must not happen after the draw). The `DRAW_*` gates keep
+# the file safe when the .py twin runs as a script and the notebook executes
+# out of order: nothing is drawn or written until a gate is flipped
+# deliberately. The frozen manifest and the default output paths point at
+# `$DATA_DIR/data/corpus/`.
+
+# %%
+import os
+
+DATA_DIR = Path(os.environ.get(
+    "DATA_DIR", str(Path.home() / "Dropbox" / "data_export" / "echochains")))
+FROZEN_MANIFEST = DATA_DIR / "data" / "corpus" / "vs_candidate_manifest.jsonl"
+DEFAULT_OUTDIR = DATA_DIR / "data" / "corpus" / "sampler"
+DRAW = False  # set True to run the one confirmatory draw
+INSPECT = False  # set True after a draw exists to render the audit tables
+
+# %%
+if DRAW:
+    main(["--manifest", str(FROZEN_MANIFEST),
+          "--outdir", str(DEFAULT_OUTDIR)])
+
+# %% [markdown]
+# ### Post-draw inspection
+#
+# The audit tables the protocol logs: quotas per band x genre, per-source
+# contributions, screen failures, draw rejections, and a preview of the
+# 180 seeds per band for the final human review.
+
+# %%
+# %%
+seed_df = None
+if INSPECT and DEFAULT_OUTDIR.exists():
+    try:
+        seed_df = pd.read_json(DEFAULT_OUTDIR / "vs_confirmatory_seeds_final.jsonl",
+                               lines=True)
+    except ValueError as exc:
+        print(f"cannot read the final seeds: {exc}")
+if seed_df is not None and len(seed_df):
+    print("== quota table ==")
+    print(pd.read_csv(DEFAULT_OUTDIR / "quota_table.csv").to_string(index=False))
+    print("== source audit (top 15) ==")
+    print(pd.read_csv(DEFAULT_OUTDIR / "source_audit.csv").head(15).to_string(index=False))
+    print("== screen failures ==")
+    fails_path = DEFAULT_OUTDIR / "screen_failures.csv"
+    if fails_path.exists() and fails_path.stat().st_size:
+        print(f"{len(pd.read_csv(fails_path))} failures")
+    else:
+        print("0 (empty file)")
+    print(f"== draw rejections: {len(pd.read_csv(DEFAULT_OUTDIR / 'draw_rejections.csv'))} rows ==")
+    for band in ("short", "long"):
+        preview = seed_df[seed_df["band"] == band]
+        print(f"== {band} seeds ({len(preview)}) ==")
+        print(preview[["seed_id", "band", "genre", "word_count",
+                       "source_id", "text"]].to_string(index=False))
