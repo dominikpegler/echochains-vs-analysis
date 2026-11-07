@@ -9,7 +9,7 @@ selection rule, exactly as in the exploratory pilot
 (generate_chains_vs.py: SYSTEM_PROMPT_VS / USER_PROMPT_VS_TEMPLATE).
 
 Direct wordings live in the canonical registry
-echochains-generation/py/tasks.py (TASKS); every template here restates the
+echochains-core/src/echochain/tasks.py (TASKS); every template here restates the
 same task instruction in the VS candidate form that the pilot validated on
 paraphrase. JSON keys differ per task ("paraphrases", "new_texts",
 "enriched_texts", "shortened_texts"); parsers must select on the template's

@@ -1,7 +1,7 @@
 """Direct-condition transmission prompts for the confirmatory chain generator.
 
 VENDORED COPY (2026-10-31): byte-identical values of the canonical registry
-`echochains-generation/py/tasks.py` (TASKS). Only `echochains-core` is
+`echochains-core/src/echochain/tasks.py` (TASKS). Only `echochains-core` is
 installed in the conda env, so this repo carries a local copy for the
 confirmatory generator and for the Vienna-cluster runs, where the sibling
 repo is not guaranteed to exist. The two files are deliberately hardcoded,

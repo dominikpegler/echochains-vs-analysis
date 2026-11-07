@@ -5,7 +5,7 @@ edge-case policy, cache/resume behavior, message shapes, and the vendored
 tasks registry. Run: python py/test_confirmatory.py
 
 The registry sync check compares py/tasks_registry.py against the canonical
-`echochains-generation/py/tasks.py` when that sibling repo is present, and
+`echochains-core/src/echochain/tasks.py` when that sibling repo is present, and
 skips with a note when it is not.
 """
 
@@ -149,9 +149,9 @@ def fresh_tmp():
 # ---------------------------------------------------------------------------
 
 def test_registry_matches_canonical():
-    canonical = Path("/home/user/code/echochains-generation/py/tasks.py")
+    canonical = Path("/home/user/code/echochains-core/src/echochain/tasks.py")
     if not canonical.exists():
-        print("  (skip: canonical echochains-generation repo not present)")
+        print("  (skip: canonical echochains-core repo not present)")
         return
     import importlib.util
     spec = importlib.util.spec_from_file_location("canonical_tasks", canonical)
@@ -159,7 +159,7 @@ def test_registry_matches_canonical():
     spec.loader.exec_module(module)
     assert tasks_registry.TASKS == module.TASKS, (
         "vendored tasks_registry.py diverged from the canonical registry")
-    print("  vendored TASKS == echochains-generation/py/tasks.py TASKS")
+    print("  vendored TASKS == echochains-core/src/echochain/tasks.py TASKS")
 
 
 def test_prompt_templates_intact():
