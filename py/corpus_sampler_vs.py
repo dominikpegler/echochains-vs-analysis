@@ -8,7 +8,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.18.1
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -40,7 +40,7 @@
 # extraction/labeling workflow. Accepted formats are `.jsonl`, `.json`,
 # `.csv`, and `.tsv`. Each row is one candidate text and must already carry
 # source metadata, license information, offsets, and any automatic labels.
-# This sampler does not fetch Wikipedia revisions, novels, or transcripts.
+# This sampler does not fetch Wikipedia revisions, fiction texts, or transcripts.
 # The frozen manifest for the confirmatory study exists at
 # `$DATA_DIR/data/corpus/vs_candidate_manifest.jsonl` (built 2026-11-07;
 # 3,104,430 candidates; the article sample and its titles are recorded in
@@ -101,8 +101,8 @@
 #
 # The output is a coverage-balanced test corpus, not a representative sample
 # of English. The final design has two sets: 90 short texts and 90 long
-# texts. Each set has 30 encyclopedic, 30 novel, and 30 dialogue seeds. The
-# genre label `novel` here is the pipeline's internal code; the paper calls
+# texts. Each set has 30 encyclopedic, 30 fiction, and 30 dialogue seeds. The
+# genre label `fiction` here is the pipeline's internal code; the paper calls
 # this genre fiction. The script writes the final seeds, reserves, screen
 # failures, draw rejections, quota tables, source audits, label audits, and
 # a sampler manifest to the output directory.
@@ -137,7 +137,7 @@ import pandas as pd
 # ## Locked protocol constants
 
 # %%
-GENRES = ("encyclopedic", "novel", "dialogue")
+GENRES = ("encyclopedic", "fiction", "dialogue")
 BANDS = {
     "short": (10, 40),
     "long": (100, 200),
@@ -217,7 +217,7 @@ def normalize_genre(x: str) -> str:
     aliases = {
         "wiki": "encyclopedic", "wikipedia": "encyclopedic",
         "encyclopedia": "encyclopedic", "encyclopedic": "encyclopedic",
-        "fiction": "novel", "novel": "novel", "prose": "novel",
+        "fiction": "fiction", "novel": "fiction", "prose": "fiction",  # "novel" accepted as a legacy alias
         "transcript": "dialogue", "transcripts": "dialogue",
         "dialogue": "dialogue", "dialog": "dialogue",
     }
@@ -518,7 +518,7 @@ def draw_cell(df: pd.DataFrame, band: str, genre: str, cfg: DrawConfig,
 
 def seed_id(band: str, genre: str, i: int) -> str:
     b = "S" if band == "short" else "L"
-    g = {"encyclopedic": "ENC", "novel": "NOV", "dialogue": "DIA"}[genre]
+    g = {"encyclopedic": "ENC", "fiction": "FIC", "dialogue": "DIA"}[genre]
     return f"VS_{b}_{g}_{i+1:03d}"
 
 # %% [markdown]
