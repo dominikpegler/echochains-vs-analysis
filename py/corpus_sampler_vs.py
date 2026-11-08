@@ -137,13 +137,13 @@ import pandas as pd
 # ## Locked protocol constants
 
 # %%
-GENRES = ("encyclopedic", "fiction", "dialogue")
+GENRES = ("encyclopedic", "fiction", "news", "speeches", "dialogue")
 BANDS = {
     "short": (10, 40),
     "long": (100, 200),
 }
-QUOTA_PER_CELL = 30
-RESERVE_PER_CELL = 20
+QUOTA_PER_CELL = 18
+RESERVE_PER_CELL = 12
 DEFAULT_SEED = 20261031
 
 # Source caps apply within each band and genre. They prevent one article,
@@ -218,6 +218,8 @@ def normalize_genre(x: str) -> str:
         "wiki": "encyclopedic", "wikipedia": "encyclopedic",
         "encyclopedia": "encyclopedic", "encyclopedic": "encyclopedic",
         "fiction": "fiction", "novel": "fiction", "prose": "fiction",  # "novel" accepted as a legacy alias
+        "guardian_news": "news", "news": "news", "globalvoices": "news",
+        "miller": "speeches", "speech": "speeches", "speeches": "speeches",
         "transcript": "dialogue", "transcripts": "dialogue",
         "dialogue": "dialogue", "dialog": "dialogue",
     }
@@ -409,11 +411,12 @@ def screen_reason(row: pd.Series) -> str:
         reasons.append("extraction_artifact")
     if row.get("language") not in {"en", "eng", "english"}:
         reasons.append("language_not_english")
-    # The permissive-license promise covers the encyclopedic and fiction
-    # cells. Dialogue sources (film transcripts) may be restricted-license
-    # material, but their license string must be documented.
+    # The permissive-license promise covers the encyclopedic, fiction, news,
+    # and speech cells. Dialogue sources (film transcripts) and any
+    # restricted-license speech sources may be non-permissive material, but
+    # their license string must be documented.
     if not row.get("is_permissive"):
-        if row.get("genre") == "dialogue":
+        if row.get("genre") in ("dialogue", "speeches"):
             if not str(row.get("license", "")).strip():
                 reasons.append("license_not_documented")
         else:
@@ -471,7 +474,10 @@ def shuffled_indices(df: pd.DataFrame, rng: random.Random) -> list[int]:
 
 def draw_cell(df: pd.DataFrame, band: str, genre: str, cfg: DrawConfig,
               rng: random.Random, global_hashes: set[str]) -> tuple[list[int], list[int], list[dict[str, Any]]]:
-    cell = df[(df["screen_pass"]) & (df["band"] == band) & (df["genre"] == genre)]
+    if df.empty or "screen_pass" not in df.columns:
+        cell = pd.DataFrame()
+    else:
+        cell = df[(df["screen_pass"]) & (df["band"] == band) & (df["genre"] == genre)]
     source_counts: Counter[str] = Counter()
     author_counts: Counter[str] = Counter()
     selected: list[int] = []
@@ -518,7 +524,8 @@ def draw_cell(df: pd.DataFrame, band: str, genre: str, cfg: DrawConfig,
 
 def seed_id(band: str, genre: str, i: int) -> str:
     b = "S" if band == "short" else "L"
-    g = {"encyclopedic": "ENC", "fiction": "FIC", "dialogue": "DIA"}[genre]
+    g = {"encyclopedic": "ENC", "fiction": "FIC", "news": "NWS",
+         "speeches": "SPH", "dialogue": "DIA"}[genre]
     return f"VS_{b}_{g}_{i+1:03d}"
 
 # %% [markdown]
