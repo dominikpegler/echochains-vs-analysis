@@ -398,7 +398,9 @@ def draw_corpus_stream(paths: list[Path], cfg: DrawConfig) -> tuple[pd.DataFrame
 # from the reserve list under the same quota.
 
 # %%
-ARTIFACT_RE = re.compile(r"\[\[|\]\]|\{\{|\}\}|\|thumb|\bFile:|\bImage:|\bCategory:|\bTemplate:")
+ARTIFACT_RE = re.compile(
+    r"\[\[|\]\]|\{\{|\}\}|\|thumb|\bFile:|\bImage:|\bCategory:|\bTemplate:"
+    r"|&[a-zA-Z#0-9]+;")
 
 
 def screen_reason(row: pd.Series) -> str:
