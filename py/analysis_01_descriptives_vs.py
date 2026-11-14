@@ -1190,7 +1190,7 @@ fig, axs = F.make_grid(
 panels = [
     (
         lambda cond: _mu_by_config(cond),
-        r"Mean absolute drift $|\mu|$",
+        r"Mean absolute axis drift $|\mu|$",
     ),
     (
         lambda cond: _lasthop_by_config(cond, "cosine"),

@@ -507,7 +507,7 @@ def sigma_and_mu_tables(summaries):
         mu_tbl[AXIS_LABELS[ax]] = [summaries[c]["mu"][ax] for c in CONDITIONS]
     mu_tbl[r"Mean $|\mu|$"] = [summaries[c]["mu"]["mean_abs"] for c in CONDITIONS]
     spec = TableSpec(
-        caption="Per-axis drift $\\mu$ (mean ordinary least squares slope of axis score on hop, per chain), gpt-4.1-nano pilot. Mean $|\\mu|$ is the mean absolute drift across the five axes.",
+        caption="Per-axis axis drift $\\mu$ (mean ordinary least squares slope of axis score on hop, per chain), gpt-4.1-nano pilot. Mean $|\\mu|$ is the mean absolute axis drift across the five axes.",
         label="tab:mu_per_axis", wrap="threeparttable", width="2col",
         use_tabularx=False, placement="htbp", use_siunitx=True,
         fontsize_pt=(9, 11), float_fmt="{:.5f}", use_index=False,
@@ -868,7 +868,7 @@ def run_figures():
     )
     panels = [
         (lambda cond: _mu_by_config(summaries[cond]["slopes"], configs),
-         r"Mean absolute drift $|\mu|$"),
+         r"Mean absolute axis drift $|\mu|$"),
         (lambda cond: _lasthop_by_config(cond, "cosine", configs),
          "Cosine similarity to seed"),
         (lambda cond: _lasthop_by_config(cond, "entail_ab", configs),
