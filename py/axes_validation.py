@@ -26,34 +26,25 @@
 # ---
 
 # %% [markdown]
-# # Semantic-axis validation for the confirmatory verbalized-sampling study
+# # Semantic-axis validation for the confirmatory study
 #
-# This notebook implements the axis-validation protocol registered in the paper
-# (Supplementary Methods, *Semantic axis construction*) and in the OSF
-# preregistration (Measured variables). It scores five established
-# human-annotated corpora with the five semantic axes and applies the frozen
-# pass criteria below. You run this notebook; nothing in it changes the axes,
-# the anchors, or any paper file. Its outputs are the validation verdicts and
+# - This notebook implements the axis-validation protocol registered in the paper
+# (Supplementary Methods, *Semantic axis construction*)
+# - It scores five established human-annotated corpora with the five semantic axes and applies pass criteria below.
+# - Run this notebook: nothing in it changes the axes, the anchors, or any paper file. Its outputs are the validation results and
 # the anchor table that the preregistration freeze records.
 #
 # ## When to run
 #
-# Run this notebook **before the preregistration freeze** (fence item F6), after
-# the corpora are fetched. Two reasons, both consequences of the registered
-# contingency:
-#
-# 1. Anchor revision is allowed only before the freeze. If an axis fails, its
-#    anchors are revised with replacement sentences drawn from these validation
-#    corpora and the validation is re-run. A validation failure found after the
-#    freeze could not be acted on within the registered rules.
-# 2. The freeze records the final anchor sentences and the validation verdicts,
-#    so both must exist and be final before the freeze.
+# Run this notebook **before the preregistration freeze**, after the corpora are
+# fetched. The freeze records the anchor sentences and the validation verdicts,
+# so both must exist and be final before the freeze.
 #
 # The notebook does not depend on collection and does not need to be re-run
-# after the freeze. Re-running is deterministic (fixed seeds, CPU embeddings)
+# after the preregistration. Re-running is deterministic (fixed seeds)
 # and reproduces the same outputs.
 #
-# ## Frozen pass criteria (decided 2026-11-14)
+# ## Pass criteria
 #
 # Per axis, over its registered human-annotated corpus:
 #
@@ -74,40 +65,13 @@
 #   cross-validation (a leave-one-anchor-out check), and the correspondence
 #   criterion must hold under every recomputation.
 #
-# An axis that fails is revised once (see the revision protocol below) and
-# re-validated. An axis that still fails after revision is excluded from the
-# confirmatory analysis: no directional test uses it and its scores are not
-# reported; the variance estimands average over the validated axes, H3a
+# An axis that fails is excluded from the confirmatory analysis: no
+# directional test uses it and its scores are not reported in the confirmatory
+# analysis (its validation metrics are reported in the supplementary
+# material); the variance estimands average over the validated axes, H3a
 # requires both predicted axes to be validated and is otherwise not
 # evaluated, and the Benjamini-Hochberg family shrinks by the withdrawn
 # tests. The registered power analysis assumes all five axes validate.
-#
-# ## Revision protocol (frozen 2026-11-14, before the validation verdicts)
-#
-# If an axis fails, its anchors are revised at most once, under a fixed
-# mechanical rule:
-#
-# 1. Split before selection: the axis's revision corpus is split into a
-#    construction half and a held-out half by a seeded draw
-#    (`REVISION_SPLIT_SEED`), before any candidate is inspected.
-# 2. Mechanical selection, human ratings and text length only, never axis
-#    scores: in a correspondence corpus, the axis's poles are re-drawn from
-#    the bottom and top rating deciles (10%) of the construction half, at
-#    lengths of 5 to 20 words as counted with the NLTK word tokenizer (the
-#    paper's length rule), five shortest per pole, ties broken by corpus row
-#    order. The low-rating pole feeds the first pole, the high-rating pole
-#    the second.
-# 3. Extremity: both poles come from the HYPO pair corpus only (the five
-#    shortest construction-half hyperboles whose matched literal also fits
-#    the length bound; the paired literals become the moderate anchors). The
-#    certainty corpus is never used for anchor selection.
-# 4. Held-out re-validation: the revised axis is re-evaluated on the
-#    held-out half (correspondence and anchor stability) and, for extremity,
-#    on the held-out pairs, with the certainty corpus re-entering in full
-#    for correspondence. The revised verdict stands; no further rounds.
-# 5. Anchors are not final until `semantic_axes.py` is edited and the anchor
-#    table regenerated. `RUN_REVISION` proposes anchors and runs the
-#    held-out checks; it does not edit the module.
 #
 # ## Inputs and outputs
 #
@@ -121,7 +85,7 @@
 # | valence | EmoBank | reader valence V (1-5) | correspondence |
 # | tone intensity | EmoBank | reader arousal A (1-5) | correspondence |
 # | factual-to-narrative | NarraDetect | three-coder narrativity (Likert) | correspondence |
-# | abstract-to-concrete | CONcreTEXT | in-context concreteness AVG | correspondence |
+# | abstract-to-concrete | CONcreTEXT | in-context target-word concreteness | correspondence |
 # | moderate-to-extreme | Pei & Jurgens certainty | sentence-level certainty (1-5) | correspondence |
 # | moderate-to-extreme | HYPO | 709 hyperbole/literal pairs | contrast pairs |
 #
@@ -137,14 +101,7 @@
 # - Set `RUN_FETCH = True` once to verify/download the pinned corpora, then
 #   back to `False`.
 # - Set `RUN_VALIDATION = True` to compute the validation and write the
-#   outputs. All executing cells are gated so an accidental run-all does
-#   nothing until you flip the switches.
-# - Set `RUN_REVISION = True` (after a validation run that left at least one
-#   axis failing) to execute the revision protocol: it reads
-#   `out/validation_results.json`, proposes anchors under the frozen
-#   selection rule, and re-validates on the held-out splits. It returns the
-#   proposed anchors and their held-out verdicts; accept a revision by
-#   editing `echochain/semantic_axes.py` and re-running `RUN_VALIDATION`.
+#   outputs.
 # - `SMOKE = True` runs the same pipeline on reduced corpora and fewer
 #   bootstrap draws (fast end-to-end check; not a validation result). The
 #   smoke pass does not write the output files.
@@ -165,10 +122,9 @@ from scipy import stats
 # Gates and switches
 RUN_FETCH = False        # verify/download the pinned corpora
 RUN_VALIDATION = False   # run the checks and write the outputs
-RUN_REVISION = False     # run the revision protocol on the failing axes
-SMOKE = False            # reduced corpora + fewer bootstrap draws
+SMOKE = False            # reduced corpora + fewer bootstrap draws, sanity check
 
-# Frozen pass criteria (registered; see the markdown cell above)
+# Pass criteria (registered; see the markdown cell above)
 RHO_MIN = 0.20           # minimum Spearman correlation for the correspondence criterion
 CI_LEVEL = 0.95          # two-sided bootstrap confidence interval for the correlation
 BOOT_DRAWS = 2000        # bootstrap draws for the correspondence interval
@@ -178,13 +134,6 @@ SIGN_ALPHA = 0.05        # below it, a one-sided binomial sign test at this leve
 
 # Determinism
 BOOT_SEED = 20261114
-
-# Revision protocol (frozen 2026-11-14, before the validation verdicts)
-REVISION_SPLIT_SEED = 20261114  # construction/held-out split
-DECILE_FRACTION = 0.10          # extreme rating decile for candidate selection
-REV_MIN_WORDS = 5               # candidate length bounds, NLTK word_tokenize tokens
-REV_MAX_WORDS = 20
-REVS_PER_POLE = 5
 
 # Paths
 DATA_DIR = Path(os.environ.get(
@@ -268,15 +217,26 @@ def load_corpora() -> dict:
     corpora["narradetect"] = narra[["TEXT", "avg_overall"]].rename(
         columns={"TEXT": "text", "avg_overall": "rating"}).reset_index(drop=True)
 
-    # CONcreTEXT: English trial + test sentences, in-context concreteness AVG.
+    # CONcreTEXT: English trial + test sentences with in-context concreteness
+    # ratings for a target word. The two files name their rating column
+    # differently (trial: MEAN, test: AVG); normalize to a common column
+    # before concatenation so the full 534 English sentences load.
     frames = []
-    for name in ["CONcreTEXT_trial_EN.tsv", "CONcreTEXT_test_EN.tsv"]:
-        frames.append(pd.read_csv(AXVAL_DIR / "concretext" / name, sep="\t"))
+    for name, rating_col in [
+        ("CONcreTEXT_trial_EN.tsv", "MEAN"),
+        ("CONcreTEXT_test_EN.tsv", "AVG"),
+    ]:
+        df_c = pd.read_csv(AXVAL_DIR / "concretext" / name, sep="\t")
+        if rating_col not in df_c.columns:
+            raise ValueError(
+                f"{name}: expected rating column {rating_col!r}, "
+                f"has {list(df_c.columns)}")
+        frames.append(df_c.rename(columns={rating_col: "rating"}))
     concretext = pd.concat(frames, ignore_index=True)
-    concretext = concretext.dropna(subset=["TEXT", "AVG"])
+    concretext = concretext.dropna(subset=["TEXT", "rating"])
     concretext["TEXT"] = concretext["TEXT"].astype(str).str.strip()
-    corpora["concretext"] = concretext[["TEXT", "AVG"]].rename(
-        columns={"TEXT": "text", "AVG": "rating"}).reset_index(drop=True)
+    corpora["concretext"] = concretext[["TEXT", "rating"]].rename(
+        columns={"TEXT": "text"}).reset_index(drop=True)
 
     # Pei & Jurgens certainty: scientific findings with sentence-level certainty.
     rows = []
@@ -309,6 +269,19 @@ def load_corpora() -> dict:
         "text_hyperbole": hypo["Sentence"].iloc[:709].to_numpy(),
         "text_literal": hypo["Sentence"].iloc[709:].to_numpy(),
     }).reset_index(drop=True)
+
+    # Schema guard: fail at load time if a corpus lost a required column.
+    required = {
+        "emobank": {"text", "V", "A"},
+        "narradetect": {"text", "rating"},
+        "concretext": {"text", "rating"},
+        "certainty": {"text", "rating"},
+        "hypo": {"text_hyperbole", "text_literal"},
+    }
+    for name, df_c in corpora.items():
+        missing = required[name] - set(df_c.columns)
+        if missing:
+            raise ValueError(f"corpus {name!r}: missing columns {missing}")
 
     if SMOKE:
         for name in ["emobank", "narradetect", "concretext", "certainty"]:
@@ -448,7 +421,7 @@ def check_correspondence(axis, corpus_df, rng, draws, anchors=None):
     """Correspondence criterion + its leave-one-anchor-out variants.
 
     `anchors` overrides the a priori anchor dict (used by the LOO variants
-    internally and by the revision protocol's held-out re-validation).
+    internally).
     """
     a = anchors if anchors is not None else ANCHORS
     start, end = axis_centroids(axis, anchors=a)
@@ -474,12 +447,12 @@ def check_correspondence(axis, corpus_df, rng, draws, anchors=None):
             "n_truncated": None}  # filled by the caller
 
 
-def check_pairs(axis, pair_df, anchors=None):
+def check_pairs(axis, pair_df):
     """Contrast-pair criterion: the pair members are ordered in the
     predicted direction. Above PAIR_RATE_MIN_PAIRS pairs, pass at a correct
     ordering rate of >= PAIR_RATE_MIN; below it, a one-sided binomial sign
     test at SIGN_ALPHA replaces the rate criterion."""
-    start, end = axis_centroids(axis, anchors=anchors)
+    start, end = axis_centroids(axis)
     embs_h = embed(pair_df["text_hyperbole"])
     embs_l = embed(pair_df["text_literal"])
     s_h = project_many(embs_h, start, end)
@@ -616,184 +589,16 @@ def write_anchor_table(path):
 
 
 # %% [markdown]
-# ## Revision protocol
-#
-# Frozen before the validation verdicts (2026-11-14). `RUN_REVISION` reads
-# the validation verdicts, proposes anchors for every failing axis under the
-# fixed selection rule (human rating and text length only, never axis
-# scores), and re-validates each revised axis on held-out data only: on the
-# held-out half for the correspondence and anchor-stability criteria, on the
-# held-out pairs for the contrast-pair criterion, with the certainty corpus
-# re-entering in full because it is never used for anchor selection. It does
-# not edit any module; an accepted revision is entered into
-# `semantic_axes.py` by hand and the validation is re-run.
-
-# %%
-from echochain.metrics_utils import token_len  # noqa: E402  (the paper's length rule)
-
-
-def deterministic_half_split(n, seed):
-    """Seeded construction/held-out split before any candidate inspection."""
-    rng = np.random.default_rng(seed)
-    perm = rng.permutation(n)
-    half = n // 2
-    return np.sort(perm[:half]), np.sort(perm[half:])
-
-
-def select_pole_candidates(corpus_df, rating_col, pole, tok_len):
-    """Candidates for one pole from the construction half: the extreme
-    rating decile, lengths of 5 to 20 word_tokenize tokens, the five
-    shortest, ties broken by corpus row order."""
-    ratings = corpus_df[rating_col].astype(float).to_numpy()
-    if pole == "second":
-        threshold = float(np.quantile(ratings, 1.0 - DECILE_FRACTION))
-        cand = corpus_df.loc[ratings >= threshold]
-    else:
-        threshold = float(np.quantile(ratings, DECILE_FRACTION))
-        cand = corpus_df.loc[ratings <= threshold]
-    cand = cand.drop_duplicates(subset="text").reset_index(drop=True)
-    cand = cand.assign(_tokens=[int(tok_len(t)) for t in cand["text"]])
-    cand = cand[(cand["_tokens"] >= REV_MIN_WORDS) & (cand["_tokens"] <= REV_MAX_WORDS)]
-    cand = cand.sort_values("_tokens", kind="stable").head(REVS_PER_POLE)
-    return [{"pole": pole, "row": int(i), "text": t, "rating": float(r),
-             "tokens": int(k)}
-            for i, t, r, k in zip(cand.index, cand["text"], cand[rating_col],
-                                  cand["_tokens"])]
-
-
-def revise_axis(axis, corpora, tok_len):
-    """Select revised anchors for a failing axis and re-validate on
-    held-out data only. Returns the proposal with its provenance and the
-    held-out verdicts."""
-    rng = np.random.default_rng(REVISION_SPLIT_SEED)
-    if axis == "moderate_to_extreme":
-        pairs = corpora["hypo"]
-        cons_idx, held_idx = deterministic_half_split(len(pairs), REVISION_SPLIT_SEED)
-        cons = pairs.iloc[cons_idx].reset_index(drop=True)
-        held = pairs.iloc[held_idx].reset_index(drop=True)
-        eligible = []
-        for i, (h, l) in enumerate(zip(cons["text_hyperbole"], cons["text_literal"])):
-            th, tl = int(tok_len(h)), int(tok_len(l))
-            if REV_MIN_WORDS <= th <= REV_MAX_WORDS and REV_MIN_WORDS <= tl <= REV_MAX_WORDS:
-                eligible.append({"pair_row": int(i), "hyperbole": h, "literal": l,
-                                 "hyperbole_tokens": th, "literal_tokens": tl})
-        selected = sorted(eligible, key=lambda d: (d["hyperbole_tokens"], d["pair_row"]))[:REVS_PER_POLE]
-        override = {"moderate": [d["literal"] for d in selected],
-                    "extreme": [d["hyperbole"] for d in selected]}
-        corr = check_correspondence(axis, corpora["certainty"], rng, BOOT_DRAWS,
-                                    anchors=override)
-        pairs_res = check_pairs(axis, held, anchors=override)
-        entry = {
-            "anchor_source": "hypo construction half",
-            "held_out": {"pairs": f"held-out pair count {pairs_res['n_pairs']}",
-                         "certainty": "full corpus (never used for selection)"},
-            "selected": selected,
-            "correspondence": corr["main"], "loo_all_pass": corr["loo_all_pass"],
-            "pairs": pairs_res,
-            "pass": bool(corr["main"]["pass"] and corr["loo_all_pass"] and pairs_res["pass"]),
-        }
-    else:
-        plan = REVISION_PLAN[axis]
-        corpus, rating_col = plan["corpus"], plan["rating_col"]
-        df = corpora[corpus]
-        cons_idx, held_idx = deterministic_half_split(len(df), REVISION_SPLIT_SEED)
-        cons = df.iloc[cons_idx].reset_index(drop=True)
-        held = df.iloc[held_idx].reset_index(drop=True)
-        first_cand = select_pole_candidates(cons, rating_col, "first", tok_len)
-        second_cand = select_pole_candidates(cons, rating_col, "second", tok_len)
-        held = held.rename(columns={rating_col: "rating"})
-        first_key, second_key = AXES[axis]
-        override = {first_key: [d["text"] for d in first_cand],
-                    second_key: [d["text"] for d in second_cand]}
-        corr = check_correspondence(axis, held, rng, BOOT_DRAWS, anchors=override)
-        entry = {
-            "anchor_source": f"{corpus} construction half",
-            "held_out": f"held-out half count {len(held)}",
-            "selected": {"first_pole": first_cand, "second_pole": second_cand},
-            "correspondence": corr["main"], "loo_all_pass": corr["loo_all_pass"],
-            "pass": bool(corr["main"]["pass"] and corr["loo_all_pass"]),
-        }
-    main = entry["correspondence"]
-    extra = (f", pair_rate={entry['pairs']['rate']:.3f} "
-             f"(criterion {entry['pairs']['criterion']}, n_pairs={entry['pairs']['n_pairs']})"
-             if "pairs" in entry else "")
-    print(f"REVISION {axis:24s} held-out rho={main['rho']:+.3f} "
-          f"CI=[{main['ci_lo']:+.3f}, {main['ci_hi']:+.3f}] "
-          f"loo_all_pass={entry['loo_all_pass']}{extra} "
-          f"-> {'PASS' if entry['pass'] else 'STILL FAILING (excluded)'}")
-    return entry
-
-
-def load_verdicts():
-    res_path = OUT_DIR / "validation_results.json"
-    if not res_path.exists():
-        raise FileNotFoundError(
-            f"{res_path} not found; run the validation (RUN_VALIDATION) first")
-    payload = json.loads(res_path.read_text())
-    return payload["results"]
-
-
-# Re-sourcing plan per axis: (corpus, rating column). The first-pole/second-pole
-# anchor keys come from AXES. The moderate-to-extreme axis is special-cased
-# above (HYPO pairs for selection, certainty for correspondence).
-REVISION_PLAN = {
-    "valence_neg_to_pos": {"corpus": "emobank", "rating_col": "V"},
-    "tone_neutral_to_intense": {"corpus": "emobank", "rating_col": "A"},
-    "factual_to_narrative": {"corpus": "narradetect", "rating_col": "rating"},
-    "abstract_to_concrete": {"corpus": "concretext", "rating_col": "rating"},
-}
-REVISION_META = {
-    "split_seed": REVISION_SPLIT_SEED,
-    "decile_fraction": DECILE_FRACTION,
-    "min_words": REV_MIN_WORDS, "max_words": REV_MAX_WORDS,
-    "anchors_per_pole": REVS_PER_POLE,
-    "criteria": {"rho_min": RHO_MIN, "ci_level": CI_LEVEL,
-                 "pair_rate_min": PAIR_RATE_MIN,
-                 "pair_rate_min_pairs": PAIR_RATE_MIN_PAIRS,
-                 "sign_alpha": SIGN_ALPHA},
-}
-
-
-def run_revision():
-    failing = [axis for axis, entry in load_verdicts().items()
-               if not entry.get("pass", True)]
-    if not failing:
-        print("no failing axes; the anchor set stands as validated")
-        return
-    print("failing axes:", ", ".join(failing))
-    corpora = load_corpora()
-    revisions = {axis: revise_axis(axis, corpora, token_len) for axis in failing}
-    payload = {"provenance": REVISION_META,
-               "anchors_sha1_before": hashlib.sha1(
-                   json.dumps(ANCHORS, sort_keys=True).encode()).hexdigest(),
-               "revisions": revisions}
-    if SMOKE:
-        print("SMOKE run: revision results not written")
-    else:
-        OUT_DIR.mkdir(parents=True, exist_ok=True)
-        (OUT_DIR / "revision_results.json").write_text(json.dumps(payload, indent=2))
-        print(f"wrote {OUT_DIR / 'revision_results.json'}")
-    return revisions
-
-
-# %% [markdown]
 # ## Run
 #
 # `RUN_FETCH` verifies (and downloads) the pinned corpora; `RUN_VALIDATION`
-# runs the checks and writes the outputs unless `SMOKE` is set;
-# `RUN_REVISION` runs the revision protocol on the failing axes.
+# runs the checks and writes the outputs unless `SMOKE` is set.
 
 # %%
 if RUN_FETCH:
     META, FETCH_REPORT = verify_or_fetch(True)
     for rel, status in sorted(FETCH_REPORT.items()):
         print(f"{rel:55s} {status}")
-
-# %%
-if RUN_REVISION:
-    REVISIONS = run_revision()
-else:
-    print("RUN_REVISION is False; nothing to do.")
 
 # %%
 if RUN_VALIDATION:
@@ -818,17 +623,17 @@ else:
 #
 # Per the registered rules:
 #
-# - Every axis passing all criteria: the axis set is final; the anchor table
-#   in `out/tab_anchor_sentences.tex` is the one recorded with the
-#   registration.
-# - A failing axis: set `RUN_REVISION = True`. It proposes anchors under the
-#   frozen mechanical rule and re-validates on held-out data. To accept a
-#   proposal, edit `echochain.semantic_axes.ANCHORS` by hand (replacing the
-#   failing axis's five pole sentences), re-run `RUN_VALIDATION`, and mirror
-#   any other paper numbers that depend on the anchors. Revision happens only
-#   before the preregistration freeze.
-# - An axis that still fails after revision is excluded from the confirmatory
-#   analysis: no directional test uses it and its scores are not reported; the
-#   variance estimands average over the validated axes, H3a requires both
-#   predicted axes and is otherwise not evaluated, and the Benjamini-Hochberg
-#   family shrinks by the withdrawn tests.
+# - An axis passing all criteria is validated; the anchor table in
+#   `out/tab_anchor_sentences.tex` (all 50 anchor sentences) is the one
+#   recorded with the registration.
+# - An axis that fails is excluded from the confirmatory analysis: no
+#   directional test uses it and its scores are not reported in the
+#   confirmatory analysis (its validation metrics are reported in the
+#   supplementary material); the variance estimands average over the
+#   validated axes, H3a requires both predicted axes and is otherwise not
+#   evaluated, and the Benjamini-Hochberg family shrinks by the withdrawn
+#   tests.
+
+# %%
+
+# %%
