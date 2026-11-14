@@ -113,15 +113,16 @@ CONDITION_CONFIG = {
 }
 
 titles = {
-    "delta_len": r"$\Delta$ tokens",
+    "delta_len": r"Delta tokens",
     "ratio_len": "Expansion ratio",
     "jaccard": "Lexical Jaccard",
     "entity_f1": "Entity F1",
     "triple_f1": "Triple F1",
     "cosine": "Embedding cosine",
-    "entail_ab": "Entail seed→hop",
-    "entail_ba": "Entail hop→seed",
-    "entail_consistent": "Entailment consistency",
+    "entail_ab": "Seed-to-hop entailment",
+    "entail_ba": "Hop-to-seed entailment",
+    "entail_consistent": "Mutual entailment",
+    "k_unique": "Distinct texts per chain",
 }
 
 KEY_METRICS = [
@@ -272,10 +273,10 @@ def write_last_hop_table_for_config(
     tbl = last_hop_summary(df_one)
     disp = tbl[["metric", "mean", "ci_lo", "ci_hi", "N"]].copy()
     disp.columns = ["Metric", "Mean", "CI low", "CI high", "N"]
-    disp["Metric"] = disp["Metric"].str.replace("_", " ")
+    disp["Metric"] = disp["Metric"].map(titles).fillna(disp["Metric"].str.replace("_", " "))
 
     spec = TableSpec(
-        caption=f"""{model.replace("_", " ")} ({config.replace("_", " ")}) — {condition_label} — Last-hop cumulative""",
+        caption=f"""{model.replace("_", " ")} ({config.replace("_", " ")}) — {condition_label} — final-hop values""",
         label=f"tab:lasthop_{tag_safe}_{condition}",
         wrap="threeparttable",
         width="2col",
@@ -286,9 +287,10 @@ def write_last_hop_table_for_config(
         use_index=False,
         fontsize_pt=(10, 12),
         header_overrides={
-            "entail_ab": "entail seed→hop",
-            "entail_ba": "entail hop→seed",
-            "entail_consistent": "entail consistent",
+            "entail_ab": "Seed-to-hop entailment",
+            "entail_ba": "Hop-to-seed entailment",
+            "entail_consistent": "Mutual entailment",
+            "k_unique": "Distinct texts per chain",
         },
         numeric_as_r={"N"},
     )
@@ -314,7 +316,7 @@ def write_combined_last_hop_table(
         ["mean", "ci_lo", "ci_hi", "N"]
     ].reindex(KEY_METRICS)
 
-    wide.index = wide.index.str.replace("_", " ")
+    wide.index = [titles.get(m, m.replace("_", " ")) for m in wide.index]
 
     print(
         "Currently, we are only printing the mean column, N and CIs are dropped from the table.\n"
@@ -322,7 +324,7 @@ def write_combined_last_hop_table(
     wide = wide.iloc[:, :9]  # mean only
 
     spec = TableSpec(
-        caption=f"""{model.replace("_", " ")} — {condition_label} — Last-hop cumulative across configs (temperature / top-p)""",
+        caption=f"""{model.replace("_", " ")} — {condition_label} — final-hop values across configs (temperature / top-p)""",
         label=f"tab:lasthop_{model.replace('.', 'p')}_all_{condition}",
         width="2col",
         wrap="threeparttable",
@@ -1304,16 +1306,16 @@ write_table(mu_tbl, STACKED_PUB / "tab_mu_per_axis.tex", spec)
 # 6.4. Sensitivity table
 sens_tbl = pd.DataFrame(
     {
-        "Metric": ["Position"],
+        "Metric": [r"Mean $\Sigma$"],
         r"$\Sigma$ Direct": [sensitivity["direct"].values[0]],
         r"$\Sigma$ VS": [sensitivity["vs_weighted"].values[0]],
-        r"$\Sigma$ VS-argmax": [sensitivity["vs_argmax"].values[0]],
-        r"Ratio weighted/direct": [sensitivity["w_over_d"].values[0]],
-        r"Ratio weighted/argmax": [sensitivity["w_over_a"].values[0]],
+        r"$\Sigma$ verbalized mode": [sensitivity["vs_argmax"].values[0]],
+        r"Ratio VS/direct": [sensitivity["w_over_d"].values[0]],
+        r"Ratio VS/verbalized mode": [sensitivity["w_over_a"].values[0]],
     }
 )
 spec = TableSpec(
-    caption="Sensitivity check: mean $\\Sigma$ at hop 200 after dropping all 18 poison-affected seed x config cells. 21 of 8,100 chains (0.26\\%) were excluded as deterministically crash-poisoned; the 18 affected seed x config cells are dropped entirely here.",
+    caption="Sensitivity check: mean $\\Sigma$ at hop 200 after dropping all 18 seed $\\times$ config cells affected by processing failures. The processing step excluded 21 of 8,100 chains (0.26\\%) after repeated software crashes on specific inputs; the 18 affected seed $\\times$ config cells are dropped entirely here.",
     label="tab:sigma_sensitivity",
     wrap="threeparttable",
     width="2col",

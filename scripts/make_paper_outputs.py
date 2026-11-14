@@ -104,15 +104,16 @@ AXIS_LABELS = {
 }
 
 TITLES = {
-    "delta_len": r"$\Delta$ tokens",
+    "delta_len": r"Delta tokens",
     "ratio_len": "Expansion ratio",
     "jaccard": "Lexical Jaccard",
     "entity_f1": "Entity F1",
     "triple_f1": "Triple F1",
     "cosine": "Embedding cosine",
-    "entail_ab": "Entail seed→hop",
-    "entail_ba": "Entail hop→seed",
-    "entail_consistent": "Entailment consistency",
+    "entail_ab": "Seed-to-hop entailment",
+    "entail_ba": "Hop-to-seed entailment",
+    "entail_consistent": "Mutual entailment",
+    "k_unique": "Distinct texts per chain",
 }
 
 KEY_METRICS = [
@@ -295,9 +296,10 @@ def _lasthop_spec_head():
         wrap="threeparttable", width="2col", use_tabularx=False,
         use_siunitx=True, float_fmt="{:.3f}",
         header_overrides={
-            "entail_ab": "entail seed→hop",
-            "entail_ba": "entail hop→seed",
-            "entail_consistent": "entail consistent",
+            "entail_ab": "Seed-to-hop entailment",
+            "entail_ba": "Hop-to-seed entailment",
+            "entail_consistent": "Mutual entailment",
+            "k_unique": "Distinct texts per chain",
         },
         numeric_as_r={"N"},
     )
@@ -310,9 +312,9 @@ def write_last_hop_table_for_config(df_cum, model, config, pub_dir,
     tbl = last_hop_summary(df_one)
     disp = tbl[["metric", "mean", "ci_lo", "ci_hi", "N"]].copy()
     disp.columns = ["Metric", "Mean", "CI low", "CI high", "N"]
-    disp["Metric"] = disp["Metric"].str.replace("_", " ")
+    disp["Metric"] = disp["Metric"].map(TITLES).fillna(disp["Metric"].str.replace("_", " "))
     spec = TableSpec(
-        caption=f"""{model.replace("_", " ")} ({config.replace("_", " ")}) — {condition_label} — Last-hop cumulative""",
+        caption=f"""{model.replace("_", " ")} ({config.replace("_", " ")}) — {condition_label} — final-hop values""",
         label=f"tab:lasthop_{tag}_{condition}",
         placement="htbp", fontsize_pt=(10, 12), **_lasthop_spec_head(),
     )
@@ -334,10 +336,10 @@ def write_combined_last_hop_table(df_cum, model, configs, pub_dir,
     big = pd.concat(rows, ignore_index=True)
     wide = big.pivot(index="metric", columns="config")[
         ["mean", "ci_lo", "ci_hi", "N"]].reindex(KEY_METRICS)
-    wide.index = wide.index.str.replace("_", " ")
+    wide.index = [TITLES.get(m, m.replace("_", " ")) for m in wide.index]
     wide = wide.iloc[:, :9]  # mean only (as in the notebook)
     spec = TableSpec(
-        caption=f"""{model.replace("_", " ")} — {condition_label} — Last-hop cumulative across configs (temperature / top-p)""",
+        caption=f"""{model.replace("_", " ")} — {condition_label} — final-hop values across configs (temperature / top-p)""",
         label=f"tab:lasthop_{model.replace('.', 'p')}_all_{condition}",
         width="2col", wrap="threeparttable", use_tabularx=False,
         placement="tbp", use_siunitx=False, float_fmt="{:.3f}",
@@ -514,15 +516,15 @@ def sigma_and_mu_tables(summaries):
     write_table(mu_tbl, out_dir / "tab_mu_per_axis.tex", spec)
 
     sens_tbl = pd.DataFrame({
-        "Metric": ["Position"],
+        "Metric": [r"Mean $\Sigma$"],
         r"$\Sigma$ Direct": [sensitivity["direct"].values[0]],
         r"$\Sigma$ VS": [sensitivity["vs_weighted"].values[0]],
         r"$\Sigma$ Verbalized mode": [sensitivity["vs_argmax"].values[0]],
-        r"Ratio weighted/direct": [sensitivity["w_over_d"].values[0]],
-        r"Ratio weighted/argmax": [sensitivity["w_over_a"].values[0]],
+        r"Ratio VS/direct": [sensitivity["w_over_d"].values[0]],
+        r"Ratio VS/verbalized mode": [sensitivity["w_over_a"].values[0]],
     })
     spec = TableSpec(
-        caption="Sensitivity check: mean $\\Sigma$ at hop 200 after dropping all 18 poison-affected seed x config cells. 21 of 8,100 chains (0.26\\%) were excluded as deterministically crash-poisoned; the 18 affected seed x config cells are dropped entirely here.",
+        caption="Sensitivity check: mean $\\Sigma$ at hop 200 after dropping all 18 seed $\\times$ config cells affected by processing failures. The processing step excluded 21 of 8,100 chains (0.26\\%) after repeated software crashes on specific inputs; the 18 affected seed $\\times$ config cells are dropped entirely here.",
         label="tab:sigma_sensitivity", wrap="threeparttable", width="2col",
         use_tabularx=False, placement="htbp", use_siunitx=True,
         fontsize_pt=(9, 11), float_fmt="{:.4f}", use_index=False,
