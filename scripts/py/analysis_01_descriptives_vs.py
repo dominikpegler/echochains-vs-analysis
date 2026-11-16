@@ -8,7 +8,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.17.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -33,7 +33,7 @@
 # analysis_01_descriptives_vs.py, and analysis_02_vs_sigma.py.
 #
 # Run once to regenerate all publication outputs:
-#   python py/analysis_01_descriptives_vs.py
+#   python scripts/py/analysis_01_descriptives_vs.py
 #
 # Arms are processed sequentially to bound memory (each condition's long CSVs are
 # ~4 GB in RAM); only small summaries are retained across conditions. The sigma/mu
@@ -75,7 +75,20 @@ LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
 STATS_BASE = Path(DATA_DIR, "data", "echodrift_stats")
 PUB_BASE = Path(DATA_DIR, "pub")
 METRICS_VERSION = "v1.0.0"
-MSG_FILE = Path("seed_sentences_50.json")
+
+
+def _find_repo_root():
+    try:
+        return Path(__file__).resolve().parents[2]
+    except NameError:
+        pass
+    for _cand in [Path.cwd().resolve(), *Path.cwd().resolve().parents]:
+        if (_cand / "exploratory_seeds").is_dir() and (_cand / "scripts").is_dir():
+            return _cand
+    return Path.cwd().resolve()
+
+
+MSG_FILE = _find_repo_root() / "exploratory_seeds" / "seed_sentences_50.json"
 
 HOP = 200
 CONFIG = "temp0.8_topp0.5"

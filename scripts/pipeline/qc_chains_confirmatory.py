@@ -20,9 +20,9 @@ cell:
    here. --skip-nli omits the model pass (torch-free inspection of the rest).
 
 Usage:
-  python py/qc_chains_confirmatory.py --model gpt-5.6-luna \
+  python scripts/pipeline/qc_chains_confirmatory.py --model gpt-5.6-luna \
       --task paraphrase --condition vs_weighted [--skip-nli]
-  python py/qc_chains_confirmatory.py --all-cells --skip-nli --model ...
+  python scripts/pipeline/qc_chains_confirmatory.py --all-cells --skip-nli --model ...
 
 Exit codes: 0 = no flags, 1 = flags found (or cells missing), 2 = error.
 """

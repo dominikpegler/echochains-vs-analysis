@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Staged publication-output builder for the VS paper (figures, tables, JSON).
 
-Restructure of the output half of py/analysis_01_descriptives_vs.py
+Restructure of the output half of scripts/py/analysis_01_descriptives_vs.py
 (2026-10-03): color/label/geometry changes must not require reprocessing
 the full study. The merged notebook stays the entry point for a complete
 re-analysis; this script regenerates only the publication outputs it
@@ -29,7 +29,7 @@ Outputs land in DATA/pub/descriptives{,_vs,_vs_argmax}/ as before, so
 the manuscript's figure paths and org macros are unchanged.
 
 Run (echochain env, from the repo root):
-  conda run -n echochain python scripts/make_paper_outputs.py --stage all
+  conda run -n echochain python scripts/reporting/make_paper_outputs.py --stage all
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 for p in [REPO, REPO / "pub-utils"]:
     if p.exists() and str(p) not in sys.path:
         sys.path.insert(0, str(p))
@@ -62,7 +62,7 @@ DATA_DIR = get_data_dir()
 LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
 STATS_BASE = Path(DATA_DIR, "data", "echodrift_stats")
 PUB_BASE = Path(DATA_DIR, "pub")
-MSG_FILE = REPO / "seed_sentences_50.json"
+MSG_FILE = REPO / "exploratory_seeds" / "seed_sentences_50.json"
 
 HOP = 200
 CONFIG = "temp0.8_topp0.5"

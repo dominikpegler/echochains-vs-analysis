@@ -7,3 +7,6 @@ dist/
 .venv/
 .env
 .envrc
+
+# Local run caches (metrics, downloaded external data)
+cache/

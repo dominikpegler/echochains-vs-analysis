@@ -62,7 +62,18 @@ API_VERSION = os.environ["API_VERSION"]
 DATA_DIR = get_data_dir()
 LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
 
-with open("seed_sentences_50.json", "r") as fp:
+def _find_repo_root():
+    try:
+        return Path(__file__).resolve().parents[2]
+    except NameError:
+        pass
+    for _cand in [Path.cwd().resolve(), *Path.cwd().resolve().parents]:
+        if (_cand / "exploratory_seeds").is_dir() and (_cand / "scripts").is_dir():
+            return _cand
+    return Path.cwd().resolve()
+
+
+with open(_find_repo_root() / "exploratory_seeds" / "seed_sentences_50.json", "r") as fp:
     SEED_SENTENCES = json.load(fp)
 
 SYSTEM_PROMPT_DIRECT = (

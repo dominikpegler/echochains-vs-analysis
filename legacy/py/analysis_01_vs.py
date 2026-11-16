@@ -94,7 +94,18 @@ EXPORT_PATH_PUB.mkdir(parents=True, exist_ok=True)
 METRICS_VERSION = "v1.0.0"
 
 # MSG_FILE = Path(DATA_DIR, "seed_sentences_50.json")
-MSG_FILE = Path("seed_sentences_50.json")  # because currently under git control
+def _find_repo_root():
+    try:
+        return Path(__file__).resolve().parents[2]
+    except NameError:
+        pass
+    for _cand in [Path.cwd().resolve(), *Path.cwd().resolve().parents]:
+        if (_cand / "exploratory_seeds").is_dir() and (_cand / "scripts").is_dir():
+            return _cand
+    return Path.cwd().resolve()
+
+
+MSG_FILE = _find_repo_root() / "exploratory_seeds" / "seed_sentences_50.json"
 
 # Which configs/models to include in paper figures/tables now (pilot)
 # Set to None to include all available configs/models

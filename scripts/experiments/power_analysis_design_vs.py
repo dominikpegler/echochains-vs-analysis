@@ -1,6 +1,6 @@
 """Compatibility entry point for the VS design-size power check.
 
-The design-size calculation was rebuilt in `py/power_analysis_prereg.py` on
+The design-size calculation was rebuilt in `scripts/experiments/power_analysis_prereg.py` on
 2026-10-31 and reworked on 2026-11-13 (H2c dropped; no drift-equivalence
 criterion). That notebook now owns the seed-vs-chain comparison, the
 pre-registered decision rules, the Benjamini-Hochberg family (32 directional
@@ -12,7 +12,7 @@ intentionally retired.
 Run from the repository root:
 
     DATA_DIR=/home/user/Dropbox/data_export/echochains \
-      python py/power_analysis_prereg.py
+      python scripts/experiments/power_analysis_prereg.py
 
 or execute/sync the paired notebook `power_analysis_prereg.ipynb`.
 """

@@ -11,8 +11,8 @@ This script recomputes the mean-Sigma tables with every affected
 headline contrasts to the full-data run from compute_sigma_exploratory.py.
 
 Usage:
-    python compute_sigma_sensitivity.py            # drop affected cells
-    python compute_sigma_sensitivity.py --list     # just list affected cells
+    python scripts/analyses/compute_sigma_sensitivity.py            # drop affected cells
+    python scripts/analyses/compute_sigma_sensitivity.py --list     # just list affected cells
 """
 
 import sys

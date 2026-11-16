@@ -54,7 +54,7 @@ belong to the plotted seed and config, not the deck-wide aggregates
 (those are the bottom panels' subject).
 
 Run (echochain conda env):
-  conda run -n echochain python scripts/make_slide_figures.py
+  conda run -n echochain python scripts/reporting/make_slide_figures.py
 """
 
 from pathlib import Path
@@ -69,7 +69,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 for p in [REPO / "src" if (REPO / "src").exists() else REPO, REPO / "pub-utils"]:
     if p.exists() and str(p) not in sys.path:
         sys.path.insert(0, str(p))

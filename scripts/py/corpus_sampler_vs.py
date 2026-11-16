@@ -8,7 +8,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.17.3
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -71,7 +71,7 @@
 # From a terminal, pass at least one manifest:
 #
 # ```bash
-# python py/corpus_sampler_vs.py --manifest /path/to/frozen_candidates.jsonl
+# python scripts/py/corpus_sampler_vs.py --manifest /path/to/frozen_candidates.jsonl
 # ```
 #
 # The default output directory is `$DATA_DIR/data/corpus/sampler`; pass
@@ -80,7 +80,7 @@
 # For a small interface test, use lower quotas:
 #
 # ```bash
-# python py/corpus_sampler_vs.py --manifest /path/to/test_candidates.jsonl \
+# python scripts/py/corpus_sampler_vs.py --manifest /path/to/test_candidates.jsonl \
 #   --outdir /tmp/opencode/corpus_sampler_test --quota 2 --reserve 1
 # ```
 #

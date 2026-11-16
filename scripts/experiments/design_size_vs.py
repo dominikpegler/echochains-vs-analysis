@@ -44,8 +44,8 @@ The Azure global-batch discount is ASSUMED at 50% and must be verified
 before the budget line is quoted. Only the luna runs cost API money; the
 open-weight panel models run on the Vienna cluster.
 
-Run:  python py/design_size_vs.py            (defaults = locked design)
-      python py/design_size_vs.py --csv PATH (also write a CSV breakdown)
+Run:  python scripts/experiments/design_size_vs.py            (defaults = locked design)
+      python scripts/experiments/design_size_vs.py --csv PATH (also write a CSV breakdown)
 
 Design basis: the user picked 90 seeds x 5 chains from the design comparison
 (50x9 / 75x6 / 112x4 / 112x5 / 150x3). The power notebook is being rebuilt
