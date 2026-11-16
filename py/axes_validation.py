@@ -32,13 +32,13 @@
 # (Supplementary Methods, *Semantic axis construction*)
 # - It scores five established human-annotated corpora with the five semantic axes and applies pass criteria below.
 # - Run this notebook: nothing in it changes the axes, the anchors, or any paper file. Its outputs are the validation results and
-# the anchor table that the preregistration freeze records.
+# the anchor table that the preregistration records.
 #
 # ## When to run
 #
-# Run this notebook **before the preregistration freeze**, after the corpora are
-# fetched. The freeze records the anchor sentences and the validation verdicts,
-# so both must exist and be final before the freeze.
+# Run this notebook **before the preregistration**, after the corpora are
+# fetched. The preregistration records the anchor sentences and the validation verdicts,
+# so both must exist and be final before the preregistration.
 #
 # The notebook does not depend on collection and does not need to be re-run
 # after the preregistration. Re-running is deterministic (fixed seeds)
@@ -46,32 +46,14 @@
 #
 # ## Pass criteria
 #
-# Per axis, over its registered human-annotated corpus:
+# An axis that fails is excluded from the confirmatory analysis.
 #
-# - **Correspondence**: the correspondence criterion tests whether higher
-#   human ratings correspond to higher axis scores. Pass: the Spearman rank
-#   correlation between axis score and human rating has a bootstrap 95%
-#   confidence interval that excludes zero, and the correlation is at least
-#   0.2.
-# - **Contrast pairs**: the contrast-pair criterion tests whether
-#   human-verified pairs are ordered in the predicted direction (for the
-#   moderate-to-extreme axis, the hyperbole member of a pair scores above its
-#   literal paraphrase). Pass: at least 75% of the pairs are ordered so; when
-#   fewer than 50 pairs are available, a binomial sign test at the 0.05 level
-#   replaces the rate criterion.
-# - **Anchor stability**: the anchor-stability criterion tests whether the
-#   direction depends on a single anchor. For each of the ten anchors, the
-#   axis direction is recomputed from the other nine, as in leave-one-out
-#   cross-validation (a leave-one-anchor-out check), and the correspondence
-#   criterion must hold under every recomputation.
+# - **Correspondence**: tests whether higher human ratings correspond to higher axis scores. Pass: Spearman rank
+#   correlation is at least 0.2 and the bootstrapped 95%
+#   confidence interval excludes zero.
+# - **Contrast pairs** (only for moderate-to-extreme axis): tests whether human-verified pairs are ordered in the predicted direction (hyperbole text scores above its literal equivalent). Pass: at least 75% of the pairs are ordered
+# - **Anchor stability**: the anchor-stability criterion tests whether the direction depends on a single anchor. For each of the ten anchors, the axis direction is recomputed from the other nine, as in leave-one-out cross-validation, and the correspondence criterion must hold under every recomputation.
 #
-# An axis that fails is excluded from the confirmatory analysis: no
-# directional test uses it and its scores are not reported in the confirmatory
-# analysis (its validation metrics are reported in the supplementary
-# material); the variance estimands average over the validated axes, H3a
-# requires both predicted axes to be validated and is otherwise not
-# evaluated, and the Benjamini-Hochberg family shrinks by the withdrawn
-# tests. The registered power analysis assumes all five axes validate.
 #
 # ## Inputs and outputs
 #
@@ -129,8 +111,6 @@ RHO_MIN = 0.20           # minimum Spearman correlation for the correspondence c
 CI_LEVEL = 0.95          # two-sided bootstrap confidence interval for the correlation
 BOOT_DRAWS = 2000        # bootstrap draws for the correspondence interval
 PAIR_RATE_MIN = 0.75     # minimum share of correctly ordered contrast pairs
-PAIR_RATE_MIN_PAIRS = 50 # at this pair count or above the rate criterion governs;
-SIGN_ALPHA = 0.05        # below it, a one-sided binomial sign test at this level does
 
 # Determinism
 BOOT_SEED = 20261114
@@ -296,6 +276,20 @@ for rel, status in sorted(FETCH_REPORT.items()):
     print(f"{rel:55s} {status}")
 
 # %% [markdown]
+# Quick check corpora
+
+# %%
+CORPORA = load_corpora()
+
+
+for k in CORPORA:
+    print("-"*64)
+    print("Corpus:", k, f" - first 5/{len(CORPORA[k])} rows:")
+    print(CORPORA[k].head())
+
+del CORPORA
+
+# %% [markdown]
 # ## Axes and embeddings
 #
 # The axes, anchors, centroids, and projection come from `echochain.semantic_axes`
@@ -449,9 +443,9 @@ def check_correspondence(axis, corpus_df, rng, draws, anchors=None):
 
 def check_pairs(axis, pair_df):
     """Contrast-pair criterion: the pair members are ordered in the
-    predicted direction. Above PAIR_RATE_MIN_PAIRS pairs, pass at a correct
-    ordering rate of >= PAIR_RATE_MIN; below it, a one-sided binomial sign
-    test at SIGN_ALPHA replaces the rate criterion."""
+    predicted direction. The criterion is the ordering rate of
+    >= PAIR_RATE_MIN (the pair corpus has 709 pairs, so the rate
+    criterion always governs)."""
     start, end = axis_centroids(axis)
     embs_h = embed(pair_df["text_hyperbole"])
     embs_l = embed(pair_df["text_literal"])
@@ -460,18 +454,13 @@ def check_pairs(axis, pair_df):
     ordered = s_h > s_l
     n = int(len(pair_df))
     rate = float(ordered.mean())
-    sign_p = float(stats.binomtest(int(ordered.sum()), n, 0.5,
-                                    alternative="greater").pvalue)
-    if n >= PAIR_RATE_MIN_PAIRS:
-        criterion, passed = "rate", bool(rate >= PAIR_RATE_MIN)
-    else:
-        criterion, passed = "sign_test", bool(sign_p < SIGN_ALPHA)
+    passed = bool(rate >= PAIR_RATE_MIN)
     # Pair-alignment provenance check: paraphrase pairs must be much more
     # similar than random sentence pairs from the corpus.
     cos = np.sum(embs_h * embs_l, axis=1) / (
         np.linalg.norm(embs_h, axis=1) * np.linalg.norm(embs_l, axis=1))
-    return {"rate": rate, "n_pairs": n, "sign_p": sign_p,
-            "criterion": criterion, "pass": passed,
+    return {"rate": rate, "n_pairs": n,
+            "pass": passed,
             "pair_cosine_median": float(np.median(cos))}
 
 
@@ -633,7 +622,4 @@ else:
 #   validated axes, H3a requires both predicted axes and is otherwise not
 #   evaluated, and the Benjamini-Hochberg family shrinks by the withdrawn
 #   tests.
-
-# %%
-
-# %%
+#
