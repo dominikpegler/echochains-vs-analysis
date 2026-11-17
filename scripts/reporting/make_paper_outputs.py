@@ -599,7 +599,7 @@ def write_power_tables():
         ("Half pilot effect", "effect_half"),
     ]
     oc_lines = [
-        r"\begin{table}[!t]", r"\centering",
+        r"\begin{table*}[!t]", r"\centering",
         r"\caption{Simulated support rates (fraction of 2,000 simulated studies in which the "
         r"hypothesis component passed its registered criteria) at the "
         r"90 seeds $\times$ five chains design. H3a passed in " + _pct(g("effect_pilot_rerun.H3a"))
@@ -613,13 +613,13 @@ def write_power_tables():
         oc_lines.append("{} & {} & {} & {} & {} & {} \\\\".format(
             label, _pct(g(key + ".H1")), _pct(g(key + ".H2")), _pct(g(key + ".H3a")),
             _pct(g(key + ".H3b")), _pct(g(key + ".H4"))))
-    oc_lines += [r"\end{tabular}", r"\end{table}", ""]
+    oc_lines += [r"\end{tabular}", r"\end{table*}", ""]
     (PUB_BASE / "tab_power_oc.tex").write_text("\n".join(oc_lines), encoding="utf-8")
 
     dc_rows = [(f"{a} seeds $\\times$ {b} chains", f"design_curve_h3a.{a}x{b}.h3a")
                for a, b in [(50, 9), (75, 6), (90, 5), (112, 4), (112, 5), (150, 3)]]
     dc_lines = [
-        r"\begin{table}[!t]", r"\centering",
+        r"\begin{table*}[!t]", r"\centering",
         r"\caption{H3a support rate at the pilot effect across seed $\times$ chain allocations.}"
         + r"\label{tab:power-design-curve}",
         r"\begin{tabular}{lc}",
@@ -628,7 +628,7 @@ def write_power_tables():
     ]
     for label, key in dc_rows:
         dc_lines.append("{} & {} \\\\".format(label, _pct(g(key))))
-    dc_lines += [r"\end{tabular}", r"\end{table}", ""]
+    dc_lines += [r"\end{tabular}", r"\end{table*}", ""]
     (PUB_BASE / "tab_power_design_curve.tex").write_text("\n".join(dc_lines), encoding="utf-8")
     print("Wrote", PUB_BASE / "tab_power_oc.tex", "and", PUB_BASE / "tab_power_design_curve.tex")
 
