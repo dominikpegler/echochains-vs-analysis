@@ -564,6 +564,75 @@ PROMPT_ROWS = [
 ]
 
 
+def _pct(x):
+    """Percent string for a support rate (x in [0,1]) or plain number."""
+    return f"{100.0 * float(x):.0f}\\%"
+
+
+def _sci(x):
+    """Plain sci-notation string for a half-width (matches the paper's fs macro)."""
+    return format("%.1e" % float(x))
+
+
+def write_power_tables():
+    """Write the two power-analysis tables as raw LaTeX floats.
+
+    The org source cannot hold src_elisp macros inside table cells (org does
+    not expand macros in table rows), so the power subsection INCLUDEs the
+    generated .tex files, exactly like the prompt table. Values are read from
+    pub/power_sim_results.json (the same JSON the paper's `power` alias reads);
+    the prereg extractor expands the prose macros itself, and the tables are
+    referenced as raw-LaTeX \\ref literals, which pass through verbatim.
+    (2026-11-17)
+    """
+    pw = json.loads((PUB_BASE / "power_sim_results.json").read_text(encoding="utf-8"))
+
+    def g(path):
+        val = pw
+        for k in path.split("."):
+            val = val[int(k)] if k.isdigit() else val[k]
+        return val
+
+    oc_rows = [
+        ("Global null", "effect_none"),
+        ("Pilot effect", "effect_pilot"),
+        ("Half pilot effect", "effect_half"),
+    ]
+    oc_lines = [
+        r"\begin{table}[!t]", r"\centering",
+        r"\caption{Simulated support rates (fraction of 2,000 simulated studies in which the "
+        r"hypothesis component passed its registered criteria) at the "
+        r"90 seeds $\times$ five chains design. H3a passed in " + _pct(g("effect_pilot_rerun.H3a"))
+        + r" of a repeat simulation with a different random seed.}"
+        + r"\label{tab:power-oc}",
+        r"\begin{tabular}{lccccc}",
+        r"Scenario & H1 & H2 & H3a & H3b & H4 \\",
+        r"\hline",
+    ]
+    for label, key in oc_rows:
+        oc_lines.append("{} & {} & {} & {} & {} & {} \\\\".format(
+            label, _pct(g(key + ".H1")), _pct(g(key + ".H2")), _pct(g(key + ".H3a")),
+            _pct(g(key + ".H3b")), _pct(g(key + ".H4"))))
+    oc_lines += [r"\end{tabular}", r"\end{table}", ""]
+    (PUB_BASE / "tab_power_oc.tex").write_text("\n".join(oc_lines), encoding="utf-8")
+
+    dc_rows = [(f"{a} seeds $\\times$ {b} chains", f"design_curve_h3a.{a}x{b}.h3a")
+               for a, b in [(50, 9), (75, 6), (90, 5), (112, 4), (112, 5), (150, 3)]]
+    dc_lines = [
+        r"\begin{table}[!t]", r"\centering",
+        r"\caption{H3a support rate at the pilot effect across seed $\times$ chain allocations.}"
+        + r"\label{tab:power-design-curve}",
+        r"\begin{tabular}{lc}",
+        r"Design & H3a \\",
+        r"\hline",
+    ]
+    for label, key in dc_rows:
+        dc_lines.append("{} & {} \\\\".format(label, _pct(g(key))))
+    dc_lines += [r"\end{tabular}", r"\end{table}", ""]
+    (PUB_BASE / "tab_power_design_curve.tex").write_text("\n".join(dc_lines), encoding="utf-8")
+    print("Wrote", PUB_BASE / "tab_power_oc.tex", "and", PUB_BASE / "tab_power_design_curve.tex")
+
+
 def write_prompt_table():
     """Write the prompt-template table from the locked code literals.
 
@@ -1203,10 +1272,12 @@ def main():
     ap.add_argument("--stage", choices=["tables", "figures", "examples", "all"],
                     default="all")
     args = ap.parse_args()
-    # The prompt table depends only on the locked code literals, so it is
-    # regenerated on every run, whichever stage is requested. (2026-11-17)
+    # The prompt table depends only on the locked code literals, and the power
+    # tables only on power_sim_results.json, so both are regenerated on every
+    # run, whichever stage is requested. (2026-11-17)
     write_prompt_table()
-    stages = ["prompts"]
+    write_power_tables()
+    stages = ["prompts", "power-tables"]
     if args.stage in ("tables", "all"):
         run_tables()
         stages.append("tables")
