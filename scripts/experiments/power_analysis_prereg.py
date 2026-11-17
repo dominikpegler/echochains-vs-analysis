@@ -8,7 +8,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.18.1
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -79,6 +79,16 @@ AXES = [
 AX_LABELS = ["valence", "tone", "extremity", "factual", "abstract"]
 IA, IF = 4, 3      # H3 axes: IA = abstract-to-concrete, IF =
                    # factual-to-narrative (AXES positions)
+# Post-validation axis set (2026-11-17, R17-6): the axis validation
+# (2026-11-14, final) validated valence, factual-to-narrative, and
+# abstract-to-concrete; tone intensity and moderate-to-extreme are excluded.
+# The H1/H4 variance estimands average over the VALIDATED axes only, so the
+# power simulation restricts its spread average to these three axes. The
+# H3a drift tests are unchanged (both predicted axes validated). The BH family
+# stays at 32 tests per model because the excluded axes carried no tests.
+VALIDATED = ["valence_neg_to_pos", "factual_to_narrative",
+             "abstract_to_concrete"]
+IV = [AXES.index(ax) for ax in VALIDATED]   # positions used for spreading
 CONFIG = "temp0.8_topp0.5"
 DESIGNS = [(50, 9), (75, 6), (90, 5), (112, 4), (112, 5), (150, 3)]
 LAMBDAS = [0.0, 0.5, 1.0]   # effect strength: 0 none, 1 pilot-sized
@@ -187,11 +197,11 @@ ent_ba_pools = pool_last_hop("entail_ba")
 def grid_sigma(df):
     s = df.loc[df["hop"] == 200]
     per_seed = s.groupby(["config", "msg_id"])[AXES].var(ddof=1)
-    return float(per_seed.mean(axis=1).mean())
+    return float(per_seed[VALIDATED].mean(axis=1).mean())
 
 
-sig_d = scores_dir.var(axis=1, ddof=1).mean()
-sig_v = scores_vs.var(axis=1, ddof=1).mean()
+sig_d = scores_dir.var(axis=1, ddof=1)[:, IV].mean()
+sig_v = scores_vs.var(axis=1, ddof=1)[:, IV].mean()
 print(f"spread, fixed setting: Direct {sig_d:.5f}  VS {sig_v:.5f}  "
       f"ratio {sig_v / sig_d:.2f}")
 print(f"spread, grid average:  Direct {grid_sigma(axis_dir):.5f}  "
@@ -223,7 +233,8 @@ print(f"entail ab / ba, Direct: {ent_ab_pools['direct'].mean():.3f} / "
 # The eight preregistered tests of a task:
 #
 # - **Spread (H1).** Per seed and axis, the variance of the axis scores
-#   across the seed's chains, averaged over the five axes. Direction: VS
+#   across the seed's chains, averaged over the three validated axes
+#   (valence, factual-to-narrative, abstract-to-concrete). Direction: VS
 #   above Direct.
 # - **Similarity (H2 cosine).** Per seed, the mean last-hop cosine.
 #   Direction: VS below Direct.
@@ -249,9 +260,10 @@ print(f"entail ab / ba, Direct: {ent_ab_pools['direct'].mean():.3f} / "
 # H3a carries two conjunctive criteria (the two drift-axis tests), and H3b
 # carries one criterion (the entailment asymmetry). The three axes without
 # a directional prediction
-# (valence, tone intensity, extremity) carry no confirmatory test; the
-# simulation reports their drift estimates and paired intervals as
-# descriptive outputs.
+# (tone intensity, moderate-to-extreme) carry no confirmatory test and no
+# reported confirmatory scores; valence carries no directional prediction.
+# The simulation reports all five axes' drift estimates and paired intervals
+# as descriptive outputs.
 
 # %% [markdown]
 # ## Scenario machinery
@@ -360,8 +372,9 @@ def one_task_stats(rng, n, k, arm_d, arm_v):
         vd = A[idx[:, None], rng.integers(0, A.shape[1], (n, k))]
         vv = Bp[idx[:, None], rng.integers(0, Bp.shape[1], (n, k))]
         if key == "spread":
-            st["spread_d"] = vd.var(axis=1, ddof=1).mean(axis=1)
-            st["spread_v"] = vv.var(axis=1, ddof=1).mean(axis=1)
+            # variance estimands average over the validated axes only (R17-6)
+            st["spread_d"] = vd.var(axis=1, ddof=1)[:, IV].mean(axis=1)
+            st["spread_v"] = vv.var(axis=1, ddof=1)[:, IV].mean(axis=1)
         elif key == "slope":
             st["slope_ax_d"], st["slope_ax_v"] = vd.mean(axis=1), vv.mean(axis=1)
         else:
@@ -374,7 +387,7 @@ def uniform_spread(rng, n, k, pool):
     """Per-seed spread under the uniform arm's labeled scenario."""
     vals = pool[rng.integers(0, pool.shape[0], n)[:, None],
                 rng.integers(0, pool.shape[1], (n, k))]
-    return vals.var(axis=1, ddof=1).mean(axis=1)
+    return vals.var(axis=1, ddof=1)[:, IV].mean(axis=1)
 
 
 TASK_SIGNS = {"H1_var": 1, "H2_cos": -1, "H2_ent_ab": -1,
@@ -483,8 +496,8 @@ def cell_verdicts(rng, design, lam, tasks_like_pilot, uniform_label, b=B):
 # - **H2**: all three fidelity criteria found (cosine, seed-to-hop
 #   entailment, hop-to-seed entailment);
 # - **H3a**: both per-axis drift tests found (drift direction);
-# - **H3b**: the entailment-asymmetry test found (loss mode); no verdict is
-#   formed over H3a and H3b together;
+# - **H3b**: the entailment-asymmetry test found (directional entailment
+#   asymmetry); no verdict is formed over H3a and H3b together;
 # - **H4**: the control contrast found (control labeled as Direct);
 # - **family**: share of simulated studies with at least one family
 #   rejection; under no effect this row is the false alarm rate.
@@ -615,8 +628,8 @@ def cfg_averaged(design, lam, b):
             wd = pd_[cfg][idx[:, None], rng.integers(0, 9, (n, k))]
             wv = synth_var_pool(pd_[cfg], pv_[cfg], lam)
             wv = wv[idx[:, None], rng.integers(0, 9, (n, k))]
-            v_vals.append(wv.var(axis=1, ddof=1).mean(axis=1))
-            d_vals.append(wd.var(axis=1, ddof=1).mean(axis=1))
+            v_vals.append(wv.var(axis=1, ddof=1)[:, IV].mean(axis=1))
+            d_vals.append(wd.var(axis=1, ddof=1)[:, IV].mean(axis=1))
         diff = np.mean(v_vals, axis=0) - np.mean(d_vals, axis=0)
         p, mean, hw = paired_check(diff)
         hw_all.append(hw)
@@ -638,8 +651,8 @@ for lam in (0.0, 1.0):
 # exists.
 
 # %%
-deg_d = (scores_dir.var(axis=1, ddof=1) == 0).mean()
-deg_v = (scores_vs.var(axis=1, ddof=1) == 0).mean()
+deg_d = (scores_dir.var(axis=1, ddof=1)[:, IV] == 0).mean()
+deg_v = (scores_vs.var(axis=1, ddof=1)[:, IV] == 0).mean()
 print(f"Direct (seed, axis) cells with zero spread across the 9 chains: "
       f"{pct(deg_d)}")
 print(f"VS (seed, axis) cells with zero spread: {pct(deg_v)}")
@@ -651,8 +664,10 @@ print(f"VS (seed, axis) cells with zero spread: {pct(deg_v)}")
 # seed texts and 5 chains, the pilot-sized H1 variance contrast, all three
 # H2 fidelity criteria, and the H4 control contrast are found in every
 # simulated study; H3a (drift direction, both axes) passes in 88 percent
-# of simulated studies (90 percent in the detailed rerun) and H3b (loss
-# mode, the entailment asymmetry) in 100 percent. Calibration: under no
+# of simulated studies (90 percent in the detailed rerun) and H3b
+# (directional entailment asymmetry) in 100 percent. The simulation averages
+# the H1/H4 variance estimands over the three validated axes only, matching
+# the post-validation preregistration. Calibration: under no
 # effect, the family false alarm is 2 percent
 # at the planned size (1 to 4 percent across the candidate designs), below
 # the intended 5.
@@ -676,7 +691,8 @@ print(f"VS (seed, axis) cells with zero spread: {pct(deg_v)}")
 # 0.028 for cosine, 0.079 for seed-to-hop and 0.058 for hop-to-seed
 # entailment, and 0.087 for the entailment asymmetry; the per-axis drift
 # intervals average 7.97e-5 (tone intensity) to 1.56e-4 (valence) axis
-# units per hop.
+# units per hop (all five axes reported descriptively; the H1/H4 estimands
+# use only the three validated axes).
 #
 # **Honest constraints.** The pools come from one small model under the
 # paraphrase task; the other models and tasks enter as labeled copies. The
@@ -690,3 +706,63 @@ print(f"VS (seed, axis) cells with zero spread: {pct(deg_v)}")
 # %%
 results.to_csv(DATA_DIR / "pub" / "power_sim_results.csv", index=False)
 print("wrote", DATA_DIR / "pub" / "power_sim_results.csv")
+
+# %% [markdown]
+# **JSON sidecar for the paper's org macros** (2026-11-17, R17 queue Q3): the
+# headline scalars the manuscript quotes in the power bullet, so re-running
+# this script updates the paper through the `power` alias instead of
+# hardcoded literals. Fractions (not percentages) to match the pct macro.
+
+# %%
+import json
+
+r90_none = cell_verdicts(np.random.default_rng(
+    SEED + int(1000 * 0.0) + 90 * 97 + 5), (90, 5), 0.0,
+    tasks_like_pilot=True, uniform_label="direct")
+r90_half = cell_verdicts(np.random.default_rng(
+    SEED + int(1000 * 0.5) + 90 * 97 + 5), (90, 5), 0.5,
+    tasks_like_pilot=True, uniform_label="direct")
+r90_full = cell_verdicts(np.random.default_rng(
+    SEED + int(1000 * 1.0) + 90 * 97 + 5), (90, 5), 1.0,
+    tasks_like_pilot=True, uniform_label="direct")
+r90_rerun = cell_verdicts(np.random.default_rng(SEED + 5), (90, 5), 1.0,
+                          tasks_like_pilot=True, uniform_label="direct")
+
+design_curve = {}
+for design in DESIGNS:
+    rr = cell_verdicts(
+        np.random.default_rng(SEED + int(1000 * 1.0) + design[0] * 97
+                              + design[1]),
+        design, 1.0, tasks_like_pilot=True, uniform_label="direct")
+    design_curve[f"{design[0]}x{design[1]}"] = {
+        "h3a": rr["H3a"], "h3a_se": rr["H3a_se"]}
+
+power_json = {
+    "design": "90x5",
+    "b_studies": B,
+    "family_false_alarm": {"value": r90_none["family_rej"]},
+    "family_false_alarm_design_range": {"lo": 0.01, "hi": 0.04},
+    "effect_none": {
+        "H1": r90_none["H1_var"], "H2": r90_none["H2"], "H3a": r90_none["H3a"],
+        "H3b": r90_none["H3b"], "H4": r90_none["H4"]},
+    "effect_half": {
+        "H1": r90_half["H1_var"], "H2": r90_half["H2"], "H3a": r90_half["H3a"],
+        "H3b": r90_half["H3b"], "H4": r90_half["H4"]},
+    "effect_pilot": {
+        "H1": r90_full["H1_var"], "H2": r90_full["H2"], "H3a": r90_full["H3a"],
+        "H3b": r90_full["H3b"], "H4": r90_full["H4"]},
+    "effect_pilot_rerun": {"H3a": r90_rerun["H3a"]},
+    "halfwidths": {
+        "variance_contrast": r90_full["H1_var_hw_mean"],
+        "cosine": r90_full["H2_cos_hw_mean"],
+        "ent_seed_to_hop": r90_full["H2_ent_ab_hw_mean"],
+        "ent_hop_to_seed": r90_full["H2_ent_ba_hw_mean"],
+        "ent_asymmetry": r90_full["H3_asym_hw_mean"],
+        "drift": {lab: r90_full[f"drift_hw_{ax}"]
+                  for ax, lab in zip(AXES, AX_LABELS)},
+    },
+    "design_curve_h3a": design_curve,
+}
+pj = DATA_DIR / "pub" / "power_sim_results.json"
+pj.write_text(json.dumps(power_json, indent=2) + "\n")
+print("wrote", pj)

@@ -45,9 +45,12 @@ import numpy as np
 import pandas as pd
 
 REPO = Path(__file__).resolve().parent.parent.parent
-for p in [REPO, REPO / "pub-utils"]:
+PROMPTS_DIR = REPO / "scripts" / "pipeline"
+for p in [REPO, REPO / "pub-utils", PROMPTS_DIR]:
     if p.exists() and str(p) not in sys.path:
         sys.path.insert(0, str(p))
+
+import vs_task_prompts as VSP
 
 from echochain.diffusion import AXES, sigma_axis_position
 from echochain.utils import get_data_dir
@@ -533,6 +536,81 @@ def sigma_and_mu_tables(summaries):
     write_table(sens_tbl, out_dir / "tab_sigma_sensitivity.tex", spec)
 
     print("Wrote sigma tables to", out_dir)
+
+
+def _tex_escape(text):
+    """Escape LaTeX specials in a literal prompt string."""
+    repl = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+    return "".join(repl.get(c, c) for c in text)
+
+
+PROMPT_ROWS = [
+    ("paraphrase", "paraphrase"),
+    ("improve", "improve"),
+    ("take_inspiration", "take inspiration"),
+    ("expand", "expand (Task 4 stage 1)"),
+    ("compress", "compress (Task 4 stage 2)"),
+]
+
+
+def write_prompt_table():
+    """Write the prompt-template table from the locked code literals.
+
+    The prompts live in scripts/pipeline/vs_task_prompts.py (single source
+    of truth); the manuscript includes the generated .tex.  Runs on every
+    invocation of this script (the table costs milliseconds).  (2026-11-17)
+    """
+    rows = []
+    for name, stage_label in PROMPT_ROWS:
+        spec = VSP.VS_TEMPLATES[name]
+        task_sentence = VSP._TEMPLATES[name]["task_sentence"]
+        assert "{k}" in task_sentence, f"task sentence for {name} lost its {{k}} slot"
+        assert spec["key"], f"template for {name} has no JSON key"
+        rows.append(
+            "{} & \\texttt{{{}}} & \\texttt{{{}}} & \\texttt{{{}}} \\\\".format(
+                _tex_escape(stage_label),
+                _tex_escape(spec["system"]),
+                _tex_escape(task_sentence),
+                _tex_escape(spec["key"]),
+            )
+        )
+    caption = (
+        "Prompt templates for the confirmatory tasks. Each hop stage sends one "
+        "system prompt and one user prompt. The user prompt appends the probability "
+        "gloss (VS) or the list-only gloss (Multi-k uniform) to the task sentence, "
+        "followed by the input text. \\{k\\} is the candidate count ($k = 5$), and "
+        "the JSON key names the candidate list in the response."
+    )
+    tex = "\n".join([
+        r"\begin{table*}[!t]",
+        r"\centering",
+        r"\caption{" + caption + r"}\label{tab:prompt-templates}",
+        r"\footnotesize",
+        r"\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}Xl@{}}",
+        r"\toprule",
+        r"Stage & System prompt & Task sentence & JSON key \\",
+        r"\midrule",
+        *rows,
+        r"\bottomrule",
+        r"\end{tabularx}",
+        r"\end{table*}",
+        "",
+    ])
+    out = PUB_BASE / "tab_prompt_templates.tex"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(tex, encoding="utf-8")
+    print("Wrote", out)
 
 
 def run_tables():
@@ -1125,7 +1203,10 @@ def main():
     ap.add_argument("--stage", choices=["tables", "figures", "examples", "all"],
                     default="all")
     args = ap.parse_args()
-    stages = []
+    # The prompt table depends only on the locked code literals, so it is
+    # regenerated on every run, whichever stage is requested. (2026-11-17)
+    write_prompt_table()
+    stages = ["prompts"]
     if args.stage in ("tables", "all"):
         run_tables()
         stages.append("tables")
