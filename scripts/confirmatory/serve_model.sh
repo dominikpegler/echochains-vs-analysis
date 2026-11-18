@@ -113,9 +113,19 @@ fi
 [[ -n "$JOB_NAME" ]] || JOB_NAME="serve-$(basename "$SERVED_NAME" \
   | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed 's/-\{1,\}$//')"
 
+
+port_busy() {
+  # 0 = something is listening on 127.0.0.1:$1
+  python3 - "$1" <<'PY' 2>/dev/null
+import socket, sys
+s = socket.socket()
+s.settimeout(1.0)
+sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)
+PY
+}
+
 if [[ "$ENGINE" == "ollama" ]]; then
   command -v ollama >/dev/null || { echo "error: ollama not on PATH" >&2; exit 1; }
-  [[ "$PORT" == "8000" ]] && PORT=11434   # ollama's convention unless overridden
   echo "engine:       ollama"
   echo "model:        $MODEL"
   echo "endpoint:     http://0.0.0.0:$PORT/v1"
@@ -127,6 +137,11 @@ if [[ "$ENGINE" == "ollama" ]]; then
   export OLLAMA_HOST="0.0.0.0:$PORT"
   server_pid=""
   if ! ollama list >/dev/null 2>&1; then
+    if port_busy "$PORT"; then
+      echo "error: port $PORT is in use and no ollama server answers there;" >&2
+      echo "       pass a free --port (e.g. 11434)" >&2
+      exit 1
+    fi
     ollama serve >/dev/null 2>&1 &
     server_pid=$!
     for _ in $(seq 1 60); do
