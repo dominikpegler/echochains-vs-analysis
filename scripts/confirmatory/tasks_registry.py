@@ -6,7 +6,7 @@ installed in the conda env, so this repo carries a local copy for the
 confirmatory generator and for the Vienna-cluster runs, where the sibling
 repo is not guaranteed to exist. The two files are deliberately hardcoded,
 not imported, and must be kept byte-identical by hand: change one, change
-the other in the same commit. `scripts/pipeline/test_confirmatory.py` checks the vendored
+the other in the same commit. `scripts/confirmatory/test_confirmatory.py` checks the vendored
 values against the canonical file whenever the sibling repo is present.
 
 The instruction is joined to the input text with no separator (`build_messages`),

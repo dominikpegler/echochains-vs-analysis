@@ -12,7 +12,7 @@ LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
 EMB_DIR = Path(DATA_DIR, "data", "echodrift_emb", ANALYSIS_NAME)
 
 PY = "/home/user/miniconda3/envs/echochain/bin/python"
-WORKER = "/home/user/code/echochains-vs-analysis/process_vs_embeddings_worker.py"
+WORKER = "/home/user/code/echochains-vs-analysis/scripts/legacy_exploratory/process_vs_embeddings_worker.py"
 
 
 def configs_to_do(restrict=None):
@@ -41,7 +41,7 @@ def main():
             print(f"  attempt {attempt}", flush=True)
             subprocess.run(
                 [PY, WORKER, SUB_PATH, ANALYSIS_NAME, MODEL, config],
-                cwd="/home/user/code/echochains-vs-analysis",
+                cwd="/home/user/code/echochains-vs-analysis/scripts/legacy_exploratory",
             )
             embdir = EMB_DIR / MODEL / config
             n_now = len(list(embdir.glob("*/chain_*_hop_*"))) if embdir.exists() else 0

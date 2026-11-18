@@ -2,8 +2,8 @@
 
 Verbalized-sampling (VS) pipeline and analysis for the EchoChains project.
 Tests whether verbalized sampling preserves chain diversity / slows convergence
-under iterated LM paraphrasing, using a drift--diffusion decomposition
-(mean drift mu vs between-chain diffusion Sigma).
+under iterated LM paraphrasing, using a two-component decomposition
+(mean drift mu vs between-chain variance Sigma).
 
 ## Setup
 
@@ -48,17 +48,21 @@ installable library. Everything imports the shared `echochain` package and
 tracked `.ipynb` is its companion (run `jupytext --sync scripts/py/<name>.py`
 after editing the `.py`).
 
-- `scripts/pipeline/` — chain generation, embeddings, and the shard pipeline:
-  - `generate_chains_confirmatory.py`, `qc_chains_confirmatory.py`,
-    `test_confirmatory.py`, `vs_task_prompts.py`, `tasks_registry.py`
-  - `run_vs_embeddings.py`, `process_vs_embeddings_worker.py`
-  - `run_shard_config.py`, `run_shard_driver.py`, `run_shard_worker.py`,
-    `launch_shards.py`, `watchdog_shards.py`, `monitor_shards.py`,
-    `health_logger.py`
+- `scripts/confirmatory/` — confirmatory collection (generation, serving, QC):
+  - `generate_chains_confirmatory.py` (frozen implementation) and
+    `generate_chains_confirmatory.ipynb` (local prototype driver)
+  - `serve_model.sh` (vLLM launcher: laptop CPU, local GPU, ASC-5 via `--slurm`)
+  - `qc_chains_confirmatory.py`, `test_confirmatory.py`
+  - `vs_task_prompts.py`, `tasks_registry.py` (locked prompts)
+- `scripts/legacy_exploratory/` — pilot-era shard and embeddings machinery
+  (`run_shard_*`, `launch_shards.py`, `monitor_shards.py`, `watchdog_shards.py`,
+  `health_logger.py`, `run_vs_embeddings.py`,
+  `process_vs_embeddings_worker.py`), tied to the old
+  `~/data_export/echo-chain` layout; not used by the confirmatory pipeline.
 - `scripts/analyses/` — post-hoc computation from the shard exports:
   `write_stats_long.py`, `write_vs_axis_csv.py`, `compute_sigma.py`,
   `compute_sigma_exploratory.py`, `compute_sigma_sensitivity.py`.
-- `scripts/experiments/` — confirmatory design and power analysis:
+- `scripts/design/` — study design, sample-size and power analysis:
   `design_size_vs.py`, `power_analysis_design_vs.py`,
   `power_analysis_prereg.py` (plus its `.ipynb`).
 - `scripts/reporting/` — publication outputs written to `DATA_DIR/pub/`:

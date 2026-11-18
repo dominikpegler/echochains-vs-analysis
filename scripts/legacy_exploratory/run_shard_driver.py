@@ -9,7 +9,7 @@ SUB_PATH = sys.argv[1]  # vs_weighted | vs_argmax
 CONFIG = sys.argv[2]
 
 PY = "/home/user/miniconda3/envs/echochain/bin/python"
-WORKER = "/home/user/code/echochains-vs-analysis/run_shard_worker.py"
+WORKER = "/home/user/code/echochains-vs-analysis/scripts/legacy_exploratory/run_shard_worker.py"
 DATA_DIR = "/home/user/data_export/echo-chain"
 OUT_DIR = Path(DATA_DIR, "data", "echodrift_stats", SUB_PATH, "shards", "gpt-4.1-nano", SUB_PATH, CONFIG)
 STATUS_FILE = OUT_DIR / ".worker_status"
@@ -64,7 +64,7 @@ def main():
             print(f"=== done {SUB_PATH}/{CONFIG}: {n}/450 after {attempt-1} attempts ===", flush=True)
             return
         print(f"=== {SUB_PATH}/{CONFIG} attempt {attempt}: {n}/450 ===", flush=True)
-        r = subprocess.run([PY, WORKER, SUB_PATH, CONFIG], cwd="/home/user/code/echochains-vs-analysis", preexec_fn=preexec)
+        r = subprocess.run([PY, WORKER, SUB_PATH, CONFIG], cwd="/home/user/code/echochains-vs-analysis/scripts/legacy_exploratory", preexec_fn=preexec)
         mark_poison()
         n_now = n_shards()
         if n_now >= 450:

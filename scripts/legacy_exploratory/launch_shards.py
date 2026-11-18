@@ -22,7 +22,7 @@ SUB_PATHS = {
 }
 
 PY = "/home/user/miniconda3/envs/echochain/bin/python"
-RUNNER = "/home/user/code/echochains-vs-analysis/run_shard_driver.py"
+RUNNER = "/home/user/code/echochains-vs-analysis/scripts/legacy_exploratory/run_shard_driver.py"
 
 
 def shard_count(sub_path, config):
@@ -61,7 +61,7 @@ def launch():
             print(f"launching screen {name} ({n}/450)", flush=True)
             subprocess.run(
                 ["screen", "-dmS", name, PY, RUNNER, sub_path, cfg],
-                cwd="/home/user/code/echochains-vs-analysis",
+                cwd="/home/user/code/echochains-vs-analysis/scripts/legacy_exploratory",
             )
             alive += 1
     print(f"all launched (cap {MAX_PARALLEL})", flush=True)

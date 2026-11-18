@@ -636,7 +636,7 @@ def write_power_tables():
 def write_prompt_table():
     """Write the prompt-template table from the locked code literals.
 
-    The prompts live in scripts/pipeline/vs_task_prompts.py (single source
+    The prompts live in scripts/confirmatory/vs_task_prompts.py (single source
     of truth); the manuscript includes the generated .tex.  Runs on every
     invocation of this script (the table costs milliseconds).  (2026-11-17)
     """

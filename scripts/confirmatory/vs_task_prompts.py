@@ -15,7 +15,7 @@ paraphrase. JSON keys differ per task ("paraphrases", "new_texts",
 "enriched_texts", "shortened_texts"); parsers must select on the template's
 key. The paraphrase entry reproduces the pilot texts byte-for-byte.
 
-Run `python scripts/pipeline/vs_task_prompts.py` to print all four full texts (prereg
+Run `python scripts/confirmatory/vs_task_prompts.py` to print all four full texts (prereg
 quoting) and run the self-checks.
 """
 

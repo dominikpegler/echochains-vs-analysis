@@ -82,7 +82,7 @@ SEED FILE SCHEMA (--seeds-file; validated on load):
   {"band": "sentence" | "long", "seeds": [{"seed_id": 1, "text": "...",
     "genre": "encyclopedic" | "fiction" | "dialogue"}, ...]}
   The confirmatory seed sets themselves are built under plan step 5; the
-  fixtures in scripts/pipeline/test_confirmatory.py use synthetic seeds. The band must
+  fixtures in scripts/confirmatory/test_confirmatory.py use synthetic seeds. The band must
   match the task (expand+compress: long; the other three tasks: sentence).
 
 OUTPUT LAYOUT (under DATA_DIR/data by default, overridable):
@@ -93,7 +93,7 @@ Backends: "azure" (Luna; env API_KEY / AZURE_ENDPOINT / API_VERSION as in
 the pilot) and "openai_compatible" (panel models on the Vienna cluster; env
 OPENAI_BASE_URL / OPENAI_API_KEY).
 
-Verify before any collection: python scripts/pipeline/test_confirmatory.py (fixture
+Verify before any collection: python scripts/confirmatory/test_confirmatory.py (fixture
 tests, no API calls), then a small live run (--limit-seeds 2 --limit-chains 1
 --limit-hops 3).
 """

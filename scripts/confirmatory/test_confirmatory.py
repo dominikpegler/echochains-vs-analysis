@@ -2,9 +2,9 @@
 
 Everything runs against a scripted mock backend; the tests verify the frozen
 edge-case policy, cache/resume behavior, message shapes, and the vendored
-tasks registry. Run: python scripts/pipeline/test_confirmatory.py
+tasks registry. Run: python scripts/confirmatory/test_confirmatory.py
 
-The registry sync check compares scripts/pipeline/tasks_registry.py against the canonical
+The registry sync check compares scripts/confirmatory/tasks_registry.py against the canonical
 `echochains-core/src/echochain/tasks.py` when that sibling repo is present, and
 skips with a note when it is not.
 """
