@@ -3,9 +3,11 @@
 # Serve one model behind an OpenAI-compatible endpoint (vLLM).
 #
 # One script for every environment: laptop CPU, local GPU workstation,
-# ASC-5 cluster. Only the parameters differ.
+# ASC-5 cluster. Only the parameters differ. CPU serving needs a vLLM
+# build with CPU support; pass --device cpu so vLLM does not try to
+# auto-detect a GPU.
 #
-#   Laptop, tiny model:   --model HuggingFaceTB/SmolLM2-135M-Instruct --dtype float32
+#   Laptop, tiny model:   --model HuggingFaceTB/SmolLM2-135M-Instruct --device cpu --dtype float32
 #   4080, Llama 8-bit:    --model meta-llama/Llama-3.1-8B-Instruct --quant bitsandbytes
 #   ASC-5, Llama BF16:    --model meta-llama/Llama-3.1-8B-Instruct --tp 1 --slurm
 #   ASC-5, Qwen/Gemma:    --model Qwen/Qwen3-32B --tp 2 --slurm
@@ -25,6 +27,7 @@ SERVED_NAME="${SERVED_NAME:-}"
 PORT="${PORT:-8000}"
 TP="${TP:-1}"
 DTYPE="${DTYPE:-}"
+DEVICE="${DEVICE:-}"
 QUANT="${QUANT:-}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-}"
@@ -47,6 +50,8 @@ Options:
   --port PORT            HTTP port (default 8000)
   --tp N                 tensor-parallel size (default 1)
   --dtype DTYPE          float32 | float16 | bfloat16 (default: vLLM auto)
+  --device DEVICE        cpu | cuda (default: vLLM auto-detect;
+                         CPU-only machines must pass --device cpu)
   --quant QUANT          e.g. bitsandbytes (default: none)
   --max-model-len N      context cap (default: model config)
   --gpu-mem-util F       vLLM default 0.9; lower on shared cards
@@ -68,6 +73,7 @@ while [[ $# -gt 0 ]]; do
     --port)          PORT="$2"; shift 2 ;;
     --tp)            TP="$2"; shift 2 ;;
     --dtype)         DTYPE="$2"; shift 2 ;;
+    --device)        DEVICE="$2"; shift 2 ;;
     --quant)         QUANT="$2"; shift 2 ;;
     --max-model-len) MAX_MODEL_LEN="$2"; shift 2 ;;
     --gpu-mem-util)  GPU_MEM_UTIL="$2"; shift 2 ;;
@@ -93,6 +99,7 @@ SERVE=("$VLLM_BIN" serve "$MODEL"
        --host 0.0.0.0 --port "$PORT"
        --tensor-parallel-size "$TP"
        --api-key "$API_KEY")
+[[ -n "$DEVICE" ]]        && SERVE+=(--device "$DEVICE")
 [[ -n "$DTYPE" ]]         && SERVE+=(--dtype "$DTYPE")
 [[ -n "$QUANT" ]]         && SERVE+=(--quantization "$QUANT")
 [[ -n "$MAX_MODEL_LEN" ]] && SERVE+=(--max-model-len "$MAX_MODEL_LEN")
@@ -115,7 +122,7 @@ slurm_script() {
 echo "model:        $MODEL"
 echo "served name:  $SERVED_NAME"
 echo "endpoint:     http://0.0.0.0:$PORT/v1"
-echo "tp / dtype:   $TP / ${DTYPE:-auto}${QUANT:+ (quant=$QUANT)}"
+echo "device/dtype: ${DEVICE:-auto} / ${DTYPE:-auto}${QUANT:+ (quant=$QUANT)}"
 [[ "$SLURM" == "1" ]] && echo "slurm:        partition=$PARTITION time=$TIME gres=gpu:$TP"
 
 if [[ "$CHECK" == "1" ]]; then
