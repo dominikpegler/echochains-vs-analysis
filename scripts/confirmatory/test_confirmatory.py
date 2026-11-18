@@ -16,6 +16,7 @@ import random
 import shutil
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -41,7 +42,11 @@ class FakeCall:
 
 
 class FakeBackend:
-    """Pops one queued response per call; entries may be exceptions."""
+    """Pops one queued response per call; entries may be exceptions.
+
+    Locked because `--workers > 1` calls it from several threads; the queue
+    order is still meaningful under `workers == 1` only.
+    """
 
     name = "fake"
 
@@ -49,14 +54,16 @@ class FakeBackend:
         self.responses = list(responses)
         self.calls: list[FakeCall] = []
         self.model_version = model_version
+        self.lock = threading.Lock()
 
     def call(self, model, messages, decoding, random_seed):
-        self.calls.append(FakeCall(model, [dict(m) for m in messages],
-                                   decoding, random_seed))
-        if not self.responses:
-            raise AssertionError("unexpected extra API call; queue exhausted")
-        item = self.responses.pop(0)
-        if isinstance(item, Exception):
+        with self.lock:
+            self.calls.append(FakeCall(model, [dict(m) for m in messages],
+                                       decoding, random_seed))
+            if not self.responses:
+                raise AssertionError("unexpected extra API call; queue exhausted")
+            item = self.responses.pop(0)
+        if isinstance(item, BaseException):
             raise item
         return gen.CallResult(text=item, model_version=self.model_version,
                               usage={"prompt_tokens": 10, "completion_tokens": 5})
@@ -125,6 +132,13 @@ class Case:
 
     def markers(self):
         return sorted(p.name for p in (self.tmp / "logs").glob(".paused_*"))
+
+    def failed(self):
+        return sorted(p.name for p in (self.tmp / "logs").glob("FAILED_MSG_*"))
+
+    def failure_record(self, name=None):
+        name = name or self.failed()[0]
+        return json.loads((self.tmp / "logs" / name).read_text(encoding="utf-8"))
 
 
 _TMP_DIRS: list[Path] = []
@@ -420,18 +434,105 @@ def test_wrong_count_retry_hits_exact_count_first():
     assert len(case.backend.calls) == 2
 
 
-def test_fewer_than_two_candidates_pauses():
+def test_fewer_than_two_candidates_skips_chain():
+    """A stage failure is terminal for the chain only: the run continues."""
     case = make_case(responses=[vs_response("paraphrase", 1.0, n=1)] * 3,
                      task="paraphrase", condition="vs_weighted", hops=3,
                      max_retries=3)
+    case.run()
+    assert not case.markers(), "a single failure must not pause the cell"
+    assert case.failed() == ["FAILED_MSG_001_chain_001.json"]
+    record = case.failure_record()
+    assert record["status"] == "failed"
+    assert record["failed_hop"] == 1
+    assert record["failed_stage"] == "paraphrase"
+    assert record["attempts"] == 3
+    assert len(record["failed_raw_responses"]) == 3
+    assert record["hops_recorded"] == 0
+    assert case.cell.chains_failed == 1
+    assert case.cell.chains_completed == 0
+    assert not (case.tmp / "logs" / "MSG_001_chain_001.json").exists()
+
+
+def test_stage_failure_skips_chain_and_continues():
+    """One skipped chain does not stop the cell: the next seed still runs."""
+    seeds = [seed_dict(seed_id=1), seed_dict(seed_id=2)]
+    case = make_case(responses=["GARBAGE"] * 3 + [list_response("paraphrase")],
+                     task="paraphrase", condition="uniform_list", seeds=seeds,
+                     chains=1, hops=1, max_retries=3)
+    case.run()
+    assert case.failed() == ["FAILED_MSG_001_chain_001.json"]
+    log2 = case.log(seed_id=2)
+    assert [e["hop"] for e in log2] == [0, 1]
+    assert case.cell.chains_failed == 1
+    assert case.cell.chains_completed == 1
+    assert not case.markers()
+
+
+def test_consecutive_failures_pause_cell():
+    """Three consecutive skipped chains trip the cell guard."""
+    seeds = [seed_dict(seed_id=i) for i in (1, 2, 3, 4)]
+    case = make_case(responses=["GARBAGE"] * 4, task="paraphrase",
+                     condition="uniform_list", seeds=seeds, chains=1, hops=1,
+                     max_retries=1)
     try:
         case.run()
-        raise AssertionError("expected CellPaused")
+        raise AssertionError("expected CellPaused from the failure guard")
     except gen.CellPaused:
         pass
-    assert case.markers(), "pause marker missing"
-    log_path = case.tmp / "logs" / "MSG_001_chain_001.json"
-    assert not log_path.exists()  # the chain never completes
+    assert case.markers()
+    assert len(case.failed()) == 3
+    assert len(case.backend.calls) == 3  # the fourth chain never starts
+
+
+def test_failure_rate_pauses_cell():
+    """A spread-out failure share above 10% pauses once 20 chains finished."""
+    n_seeds = 40
+    seeds = [seed_dict(seed_id=i) for i in range(1, n_seeds + 1)]
+    # every third chain fails once: 13-14 of 40, well above 10%
+    queue: list = []
+    for seed_id in range(1, n_seeds + 1):
+        if seed_id % 3 == 0:
+            queue.append("GARBAGE")
+        else:
+            queue.append(list_response("paraphrase"))
+    case = make_case(responses=queue, task="paraphrase",
+                     condition="uniform_list", seeds=seeds, chains=1, hops=1,
+                     max_retries=1)
+    try:
+        case.run()
+        raise AssertionError("expected CellPaused from the failure-rate guard")
+    except gen.CellPaused:
+        pass
+    assert case.markers()
+    finished = case.cell.chains_completed + case.cell.chains_failed
+    assert finished >= gen.CellState.FAILURE_PAUSE_MIN_CHAINS
+    assert case.cell.chains_failed / finished > gen.CellState.FAILURE_PAUSE_RATE
+
+
+def test_skipped_chain_not_retried_on_resume():
+    """The FAILED_MSG record is terminal: a plain resume makes no call."""
+    case = make_case(responses=["GARBAGE"] * 2, task="paraphrase",
+                     condition="uniform_list", hops=1, max_retries=2)
+    case.run()
+    calls = len(case.backend.calls)
+    case.runner.run()
+    assert len(case.backend.calls) == calls
+    assert case.failed() == ["FAILED_MSG_001_chain_001.json"]
+
+
+def test_parser_tolerates_control_characters_and_python_literals():
+    raw = '{"paraphrases": [{"text": "line one\nline two"}]}'
+    assert gen.extract_json_object(raw)["paraphrases"][0]["text"] == \
+        "line one\nline two"
+    python_literal = "{'paraphrases': [{'text': 'a', 'probability': 0.5,},]}"
+    assert gen.extract_json_object(python_literal)["paraphrases"][0]["text"] \
+        == "a"
+    try:
+        gen.extract_json_object("not json at all")
+        raise AssertionError("expected ParseError")
+    except gen.ParseError:
+        pass
 
 
 def test_duplicates_logged_not_retried():
@@ -543,31 +644,32 @@ def test_completed_chain_skipped():
 
 def test_parse_failure_not_cached():
     """Malformed responses must not poison the cache: after retries exhaust,
-    nothing is cached, so a resume re-draws the hop."""
+    nothing is cached and the chain is skipped."""
     case = make_case(responses=["GARBAGE"] * 2, task="paraphrase",
                      condition="uniform_list", hops=1, max_retries=2)
-    try:
-        case.run()
-        raise AssertionError("expected CellPaused")
-    except gen.CellPaused:
-        pass
+    case.run()
     assert not case.cache.entries
+    assert case.failed() == ["FAILED_MSG_001_chain_001.json"]
+    assert len(case.failure_record()["failed_raw_responses"]) == 2
 
 
 def test_partial_log_and_resume():
     """A crash mid-chain leaves a partial log; resume rebuilds all hops (the
-    cached ones without new calls) and reproduces their texts."""
+    cached ones without new calls) and reproduces their texts. The crash is a
+    KeyboardInterrupt, which is not a stage failure: a stage failure is
+    terminal for the chain, a crash is not."""
     responses = [vs_response("paraphrase", 0.4, 0.3, 0.15, 0.1, 0.05)] * 2 \
         + [vs_response("paraphrase", 0.9, 0.02, 0.02, 0.02, 0.04)] * 2
     case = make_case(responses=[responses[0], responses[1],
-                                RuntimeError("simulated crash")],
+                                KeyboardInterrupt()],
                      task="paraphrase", condition="vs_weighted", hops=4,
                      flush_every=2)
     try:
         case.run()
-        raise AssertionError("expected CellPaused")
-    except gen.CellPaused:
+        raise AssertionError("expected KeyboardInterrupt (simulated crash)")
+    except KeyboardInterrupt:
         pass
+    assert not case.failed()  # a crash is not a skipped chain
     log_path = case.tmp / "logs" / "MSG_001_chain_001.json"
     partial = log_path.with_suffix(".json.partial")
     assert not log_path.exists()
@@ -583,10 +685,125 @@ def test_partial_log_and_resume():
     assert [e["hop"] for e in final] == [0, 1, 2, 3, 4]
     assert [e["text"] for e in final[1:3]] == early_texts
     assert not partial.exists()
-    # the crashed run consumed 2 real calls + 3 failed attempts; only hops
-    # 3-4 hit the API during the resume
+    # the crashed run consumed 2 real calls; only hops 3-4 hit the API
     new_calls = len(case.backend.calls) - calls_before_resume
     assert new_calls == 2
+
+
+# ---------------------------------------------------------------------------
+# Concurrency (--workers)
+# ---------------------------------------------------------------------------
+
+class SeededBackend:
+    """Order-independent backend: the response depends only on the request.
+
+    A queued FakeBackend cannot be used for a serial-vs-parallel comparison,
+    because parallel calls consume the queue in a different order.
+    """
+
+    name = "fake"
+
+    def __init__(self):
+        self.seeds: list[int] = []
+        self.lock = threading.Lock()
+
+    def call(self, model, messages, decoding, random_seed):
+        with self.lock:
+            self.seeds.append(random_seed)
+        rng = random.Random(random_seed)
+        rows = []
+        for i in range(5):
+            rows.append({"text": f"variant {i} of {random_seed % 1000}",
+                         "probability": max(rng.random(), 1e-6)})
+        return gen.CallResult(
+            text=json.dumps({joint_key("paraphrase"): rows}),
+            model_version="fake-model@v1",
+            usage={"prompt_tokens": 10, "completion_tokens": 5})
+
+
+def _run_seeded_cell(workers, tmp):
+    runner = gen.ChainRunner(
+        backend=SeededBackend(), model="fake-model", task="paraphrase",
+        condition="vs_weighted",
+        seeds=[seed_dict(seed_id=i) for i in (1, 2, 3)], band="sentence",
+        out_dir=tmp / "logs", cache=gen.CallCache(tmp / "cache.jsonl"),
+        chains=2, hops=3, partial_flush_every=2, max_retries=3)
+    runner.run(workers=workers)
+    return runner, tmp
+
+
+def test_parallel_completes_all_chains():
+    seeds = [seed_dict(seed_id=i) for i in (1, 2, 3, 4)]
+    n_calls = len(seeds) * 2 * 2
+    case = make_case(responses=[list_response("paraphrase")] * n_calls,
+                     task="paraphrase", condition="uniform_list", seeds=seeds,
+                     chains=2, hops=2)
+    case.runner.run(workers=4)
+    logs = sorted((case.tmp / "logs").glob("MSG_*.json"))
+    assert len(logs) == 8
+    for path in logs:
+        log = json.loads(path.read_text(encoding="utf-8"))
+        assert [e["hop"] for e in log] == [0, 1, 2]
+    assert case.cell.chains_completed == 8
+    assert case.cell.chains_failed == 0
+    assert len(case.backend.calls) == n_calls
+    assert not case.failed()
+
+
+def test_parallel_selection_matches_serial():
+    """Concurrency changes no call and no selection: same seeds, same texts."""
+    serial, dir_a = _run_seeded_cell(1, fresh_tmp())
+    parallel, dir_b = _run_seeded_cell(4, fresh_tmp())
+    files_a = sorted(p.name for p in (dir_a / "logs").glob("MSG_*.json"))
+    files_b = sorted(p.name for p in (dir_b / "logs").glob("MSG_*.json"))
+    assert files_a == files_b
+    assert len(files_a) == 6
+    for name in files_a:
+        log_a = json.loads((dir_a / "logs" / name).read_text(encoding="utf-8"))
+        log_b = json.loads((dir_b / "logs" / name).read_text(encoding="utf-8"))
+        for entry_a, entry_b in zip(log_a[1:], log_b[1:]):
+            for key in ("hop", "text", "selected_index", "random_seed",
+                        "probabilities_normalized", "deviations"):
+                assert entry_a[key] == entry_b[key], (name, key)
+    assert sorted(serial.backend.seeds) == sorted(parallel.backend.seeds)
+
+
+class SelectiveBackend:
+    """Deterministic per-seed failure: garbage when the input carries a marker."""
+
+    name = "fake"
+
+    def __init__(self, bad_marker: str):
+        self.bad_marker = bad_marker
+        self.calls = 0
+        self.lock = threading.Lock()
+
+    def call(self, model, messages, decoding, random_seed):
+        with self.lock:
+            self.calls += 1
+        if any(self.bad_marker in m["content"] for m in messages):
+            return gen.CallResult("GARBAGE", "fake-model@v1", {})
+        return gen.CallResult(list_response("paraphrase"), "fake-model@v1", {})
+
+
+def test_parallel_failure_skips_one_chain():
+    """One failing chain in a parallel run costs one chain, not the cell."""
+    seeds = [seed_dict(seed_id=1, text="keep this one"),
+             seed_dict(seed_id=2, text="DROP this one"),
+             seed_dict(seed_id=3, text="keep that one")]
+    tmp = fresh_tmp()
+    runner = gen.ChainRunner(
+        backend=SelectiveBackend("DROP"), model="fake-model",
+        task="paraphrase", condition="uniform_list", seeds=seeds,
+        band="sentence", out_dir=tmp / "logs",
+        cache=gen.CallCache(tmp / "cache.jsonl"), chains=1, hops=1,
+        partial_flush_every=2, max_retries=1)
+    runner.run(workers=3)
+    failed = sorted(p.name for p in (tmp / "logs").glob("FAILED_MSG_*"))
+    assert failed == ["FAILED_MSG_002_chain_001.json"]
+    assert runner.cell.chains_completed == 2
+    assert runner.cell.chains_failed == 1
+    assert not sorted((tmp / "logs").glob(".paused_*"))
 
 
 # ---------------------------------------------------------------------------
@@ -651,6 +868,61 @@ def test_run_cell_single_stage_end_to_end():
     assert log[1]["selected_index"] is not None
 
 
+def test_rerun_failed_uses_new_replicate():
+    """--rerun-failed reruns the recorded pairs at replicate+1, no overwrite."""
+    tmp = fresh_tmp()
+    seeds = [seed_dict()]
+    common = dict(model="fake-model", task="paraphrase",
+                  condition="uniform_list", band="sentence", seeds=seeds,
+                  logs_root=tmp / "logs", cache_root=tmp / "cache", chains=1,
+                  hops=1, replicate=0, partial_flush_every=2, max_retries=3,
+                  limit_seeds=None, limit_chains=None, limit_hops=None)
+    gen.run_cell(FakeBackend(["GARBAGE"] * 3), **common)
+    cell = (tmp / "logs" / "fake-model" / "confirmatory" / "paraphrase"
+            / "uniform_list")
+    assert (cell / "FAILED_MSG_001_chain_001.json").exists()
+    assert not (cell / "MSG_001_chain_001.json").exists()
+
+    gen.run_cell(FakeBackend([list_response("paraphrase")]),
+                 rerun_failed=True, **common)
+    assert (cell / "MSG_001_chain_001_rep1.json").exists()
+    assert (cell / "FAILED_MSG_001_chain_001.json").exists()
+    log = json.loads((cell / "MSG_001_chain_001_rep1.json")
+                     .read_text(encoding="utf-8"))
+    assert log[0]["hop"] == 0 and log[1]["hop"] == 1
+
+
+def test_rerun_failed_noop_when_clean():
+    tmp = fresh_tmp()
+    gen.run_cell(FakeBackend([list_response("paraphrase")]),
+                 model="fake-model", task="paraphrase",
+                 condition="uniform_list", band="sentence",
+                 seeds=[seed_dict()], logs_root=tmp / "logs",
+                 cache_root=tmp / "cache", chains=1, hops=1, replicate=0,
+                 partial_flush_every=2, max_retries=3, limit_seeds=None,
+                 limit_chains=None, limit_hops=None, rerun_failed=True)
+    cell = (tmp / "logs" / "fake-model" / "confirmatory" / "paraphrase"
+            / "uniform_list")
+    assert not list(cell.glob("FAILED_MSG_*"))
+    assert not list(cell.glob("*_rep1.json"))
+
+
+def test_failed_chains_reads_latest_replicate():
+    tmp = fresh_tmp()
+    cell = tmp / "cell"
+    cell.mkdir()
+    for name, replicate, seed_id, chain in (
+            ("FAILED_MSG_001_chain_001.json", 0, 1, 1),
+            ("FAILED_MSG_003_chain_002_rep1.json", 1, 3, 2),
+            ("FAILED_MSG_004_chain_001_rep1.json", 1, 4, 1)):
+        record = {"status": "failed", "replicate": replicate,
+                  "seed_id": seed_id, "chain": chain}
+        (cell / name).write_text(json.dumps(record), encoding="utf-8")
+    replicate, pairs = gen.failed_chains(cell)
+    assert replicate == 1
+    assert pairs == [(3, 2), (4, 1)]
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -685,11 +957,15 @@ def test_qc_inspect_cell():
     (cell / "MSG_001_chain_001.json").write_text(json.dumps(log1))
     (cell / "MSG_002_chain_001.json").write_text(json.dumps(log2))
     (cell / ".paused_2_1_2_paraphrase").write_text("why")
+    (cell / "FAILED_MSG_003_chain_001.json").write_text(
+        json.dumps({"status": "failed", "seed_id": 3, "chain": 1,
+                    "replicate": 0}))
     report = qc.inspect_cell(cell, "paraphrase", "vs_weighted", hops=2,
-                             chains_expected=1, n_seeds=2)
+                             chains_expected=1, n_seeds=3)
     assert report["coverage"]["chains_found"] == 2
     assert len(report["incomplete_chains"]) == 1
     assert report["pause_markers"] == [".paused_2_1_2_paraphrase"]
+    assert report["failure_records"] == ["FAILED_MSG_003_chain_001.json"]
     # retries: 1 of 3 hops
     assert report["technical"]["hops_total"] == 3
     assert report["technical"]["hops_retried"] == 1
@@ -767,7 +1043,12 @@ TESTS = [
     test_malformed_retries_then_success,
     test_wrong_count_then_accept,
     test_wrong_count_retry_hits_exact_count_first,
-    test_fewer_than_two_candidates_pauses,
+    test_fewer_than_two_candidates_skips_chain,
+    test_stage_failure_skips_chain_and_continues,
+    test_consecutive_failures_pause_cell,
+    test_failure_rate_pauses_cell,
+    test_skipped_chain_not_retried_on_resume,
+    test_parser_tolerates_control_characters_and_python_literals,
     test_duplicates_logged_not_retried,
     test_invalid_probability_and_uniform_fallback,
     test_selection_tie_logged,
@@ -777,9 +1058,15 @@ TESTS = [
     test_completed_chain_skipped,
     test_parse_failure_not_cached,
     test_partial_log_and_resume,
+    test_parallel_completes_all_chains,
+    test_parallel_selection_matches_serial,
+    test_parallel_failure_skips_one_chain,
     test_seed_schema_validation,
     test_band_mismatch_rejected,
     test_run_cell_single_stage_end_to_end,
+    test_rerun_failed_uses_new_replicate,
+    test_rerun_failed_noop_when_clean,
+    test_failed_chains_reads_latest_replicate,
     test_default_decoding_omits_parameters,
     test_qc_inspect_cell,
     test_qc_clean_cell_exits_zero,

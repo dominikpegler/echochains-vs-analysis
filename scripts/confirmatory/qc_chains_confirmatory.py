@@ -3,7 +3,10 @@
 READS written chain logs (no API access) and reports, per task x condition
 cell:
 1. Coverage: hops present per seed x chain; incomplete chains; crash/pause
-   markers found in the cell directory.
+   markers and FAILED_MSG_* skipped-chain records found in the cell directory.
+   A skipped chain (recorded by the generator when a stage exhausted its
+   retry budget) counts as missing coverage and flags the cell; rerun it with
+   the generator's --rerun-failed.
 2. Technical-failure rate: share of hops needing at least one retry
    (entry["attempts"] > 1); the Methods' pause-and-inspect flag at > 10%.
    Technical retries are counted separately from substantive performance.
@@ -102,6 +105,8 @@ def inspect_cell(cell_dir: Path, task: str, condition: str, *, hops: int,
         "coverage": coverage,
         "incomplete_chains": incomplete,
         "pause_markers": sorted(p.name for p in cell_dir.glob(".paused_*")),
+        "failure_records": sorted(p.name
+                                  for p in cell_dir.glob("FAILED_MSG_*.json")),
         "technical": {"hops_total": total_hops, "hops_retried": retry_hops,
                       "retry_rate": technical_rate,
                       "flag_over_10pct": technical_rate > 0.10},
@@ -154,6 +159,9 @@ def summarize(report: dict) -> str:
     cov = report["coverage"]
     lines.append(f"chains: {cov['chains_found']}/{cov['chains_expected']}; "
                  f"incomplete: {len(report['incomplete_chains'])}")
+    if report.get("failure_records"):
+        lines.append(f"skipped chains: {len(report['failure_records'])} "
+                     f"(FAILED_MSG_* records; rerun with --rerun-failed)")
     tech = report["technical"]
     lines.append(f"retry rate: {tech['hops_retried']}/{tech['hops_total']} "
                  f"= {tech['retry_rate']:.1%}"
@@ -189,6 +197,7 @@ def qc_for_cell(model: str, task: str, condition: str, logs_root: Path,
     # outcome, so a floor flag must not gate collection (2026-10-31 decision;
     # see run_nli_floor).
     flagged = bool(report["incomplete_chains"] or report["pause_markers"]
+                   or report["failure_records"]
                    or report["technical"]["flag_over_10pct"]
                    or report.get("collapse", {}).get("flagged_seeds"))
     payload = dict(report)

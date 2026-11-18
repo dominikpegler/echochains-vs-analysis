@@ -19,7 +19,15 @@
 #   OPENAI_BASE_URL=http://localhost:$PORT/v1 \
 #   OPENAI_API_KEY=local \
 #   python scripts/confirmatory/generate_chains_confirmatory.py \
-#       --backend openai_compatible --model "$SERVED_NAME" ...
+#       --backend openai_compatible --model "$SERVED_NAME" --workers 32 ...
+#
+# --workers N runs N chains concurrently against this server (default 1).
+# On a 16 GB consumer card serving an 8B 4-bit model, 16-32 is the useful
+# range; past that the engine is memory-bandwidth bound and only per-request
+# latency grows. Tune it against the server log: keep "Waiting" near 0 and
+# "GPU KV cache usage" below ~70%, using the long band (expand+compress) as
+# the heaviest cell. A skipped chain is recorded as FAILED_MSG_*.json and the
+# run continues; rerun those with --rerun-failed.
 #
 # Defaults can come from environment variables; command-line flags win.
 # ---------------------------------------------------------------------------
