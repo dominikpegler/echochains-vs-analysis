@@ -172,14 +172,30 @@ if [[ "$CHECK" != "1" && "$HF_SNAPSHOT" != "never" && "$MODEL" != /* && "$MODEL"
   }
   _py="$(resolve_vllm_py_for_snapshot)"
   echo "resolving HF snapshot for $MODEL with $_py ..." >&2
-  MODEL_PATH="$(HF_TOKEN="${HF_TOKEN:-}" HF_HUB_TOKEN="${HF_TOKEN:-${HF_HUB_TOKEN:-}}" $_py - "$MODEL" <<'PY'
-import os, sys
-from huggingface_hub import HfApi, snapshot_download
-repo = sys.argv[1]
-tok = os.environ.get("HF_TOKEN") or os.environ.get("HF_HUB_TOKEN")
+  MODEL_PATH="$($_py - "$MODEL" "$repo_root/.env" <<'PY'
+import os, sys, tempfile
+from pathlib import Path
+repo, env_path = sys.argv[1], Path(sys.argv[2])
+tok = None
+for raw in env_path.read_text().splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    if line.startswith("export "):
+        line = line[len("export "):].strip()
+    if line.startswith("HF_TOKEN="):
+        tok = line.split("=", 1)[1].strip().strip('"').strip("'")
+        break
 if not tok:
-    raise SystemExit("HF token missing: set HF_TOKEN in the repo .env")
-# Force the explicit token; do not rely on any cached login token.
+    tok = os.environ.get("HF_TOKEN") or os.environ.get("HF_HUB_TOKEN")
+if not tok:
+    raise SystemExit(f"HF token missing: checked {env_path}")
+# Isolate auth lookup from any cached/expired login token (e.g. old whisperx).
+home = tempfile.mkdtemp(prefix="hf_auth_")
+os.environ["HF_HOME"] = home
+os.environ["HF_TOKEN"] = tok
+os.environ["HF_HUB_TOKEN"] = tok
+from huggingface_hub import HfApi, snapshot_download
 HfApi(token=tok).model_info(repo)
 print(snapshot_download(repo_id=repo, token=tok, local_files_only=False))
 PY
