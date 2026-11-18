@@ -25,6 +25,15 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
+# Load the repo's .env (HF_TOKEN etc.) when present; real env vars win.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../.." && pwd)"
+if [[ -z "${HF_TOKEN:-}" && -f "$repo_root/.env" ]]; then
+  set -a
+  source "$repo_root/.env"
+  set +a
+fi
+
 MODEL="${MODEL:-}"
 SERVED_NAME="${SERVED_NAME:-}"
 PORT="${PORT:-8892}"
