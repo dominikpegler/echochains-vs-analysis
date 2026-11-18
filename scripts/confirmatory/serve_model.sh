@@ -31,33 +31,26 @@ set -euo pipefail
 script_abs="$(readlink -f "${BASH_SOURCE[0]}")"
 repo_root="$(cd "$(dirname "$script_abs")/../.." && pwd)"
 if [[ -z "${HF_TOKEN:-}" && -f "$repo_root/.env" ]]; then
-  # Read only HF_TOKEN from .env so a provider API_KEY does not become the
-  # local OpenAI-compatible server key.
+  # Take only HF_TOKEN so unrelated keys (e.g. a provider API_KEY) do not
+  # leak into the local server configuration.
   HF_TOKEN="$(python3 - "$repo_root/.env" <<'PY'
-from pathlib import Path
 import sys
+from pathlib import Path
 for raw in Path(sys.argv[1]).read_text().splitlines():
     line = raw.strip()
-    if not line or line.startswith("#"):
-        continue
     if line.startswith("export "):
         line = line[len("export "):].strip()
     if line.startswith("HF_TOKEN="):
-        v = line.split("=", 1)[1].strip().strip('"').strip("'")
-        print(v)
+        print(line.split("=", 1)[1].strip().strip('"').strip("'"))
         break
 PY
 )"
 fi
-if [[ -z "${HF_TOKEN:-}" ]]; then
-  echo "error: HF_TOKEN not found. Checked $repo_root/.env" >&2
-  echo "       Add HF_TOKEN=... there or export HF_TOKEN before running." >&2
-  exit 1
-fi
 # vLLM/transformers read HF_HUB_TOKEN (older builds only HF_TOKEN); set both.
-export HF_HUB_TOKEN="$HF_TOKEN"
-export HF_TOKEN="$HF_TOKEN"
-echo "HF token loaded from ${repo_root}/.env" >&2
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  export HF_HUB_TOKEN="$HF_TOKEN"
+  export HF_TOKEN="$HF_TOKEN"
+fi
 
 MODEL="${MODEL:-}"
 SERVED_NAME="${SERVED_NAME:-}"
@@ -77,7 +70,6 @@ JOB_NAME="${JOB_NAME:-}"
 VLLM_BIN="${VLLM_BIN:-vllm}"
 VLLM_PY="${VLLM_PY:-}"
 VLLM_USE_MODULE="${VLLM_USE_MODULE:-}"
-HF_SNAPSHOT="${HF_SNAPSHOT:-auto}"
 CHECK=0
 
 usage() {
@@ -98,9 +90,6 @@ Options:
   --module               run vLLM via 'python -m vllm.entrypoints.cli.main'
                          (auto-enabled when the 'vllm' console script cannot
                          find vllm package metadata, as with vllm-cpu wheels)
-  --hf-snapshot MODE     auto | never | always. auto/always predownload HF
-                         model ids to the local cache and serve that snapshot
-                         path, while keeping --served-model-name as MODEL.
   --quant QUANT          e.g. bitsandbytes (default: none)
   --max-model-len N      context cap (default: model config)
   --gpu-mem-util F       vLLM default 0.9; lower on shared cards
@@ -126,7 +115,6 @@ while [[ $# -gt 0 ]]; do
     --python)        VLLM_PY="$2"; shift 2 ;;
     --module)        VLLM_USE_MODULE=1; shift ;;
     --no-module)     VLLM_USE_MODULE=0; shift ;;
-    --hf-snapshot)   HF_SNAPSHOT="$2"; shift 2 ;;
     --quant)         QUANT="$2"; shift 2 ;;
     --max-model-len) MAX_MODEL_LEN="$2"; shift 2 ;;
     --gpu-mem-util)  GPU_MEM_UTIL="$2"; shift 2 ;;
@@ -155,57 +143,6 @@ fi
 [[ -n "$SERVED_NAME" ]] || SERVED_NAME="$MODEL"
 [[ -n "$JOB_NAME" ]] || JOB_NAME="serve-$(basename "$SERVED_NAME" \
   | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed 's/-\{1,\}$//')"
-
-MODEL_PATH="$MODEL"
-if [[ "$CHECK" != "1" && "$HF_SNAPSHOT" != "never" && "$MODEL" != /* && "$MODEL" == */* ]]; then
-  # Work around vLLM/Transformers paths that do not forward --hf-token to all
-  # internal config lookups for gated repos: download with huggingface_hub
-  # first (using HF_TOKEN/HF_HUB_TOKEN), then serve the local snapshot path.
-  resolve_vllm_py_for_snapshot() {
-    if [[ -n "$VLLM_PY" ]]; then echo "$VLLM_PY"; return; fi
-    local bin; bin="$(command -v "$VLLM_BIN" 2>/dev/null || true)"
-    if [[ -n "$bin" && -x "$(dirname "$bin")/python" ]]; then
-      echo "$(dirname "$bin")/python"
-    else
-      echo "python3"
-    fi
-  }
-  _py="$(resolve_vllm_py_for_snapshot)"
-  echo "resolving HF snapshot for $MODEL with $_py ..." >&2
-  MODEL_PATH="$($_py - "$MODEL" "$repo_root/.env" <<'PY'
-import os, sys, tempfile
-from pathlib import Path
-repo = sys.argv[1]
-env_path = Path(sys.argv[2])
-tok = None
-for raw in env_path.read_text().splitlines():
-    line = raw.strip()
-    if not line or line.startswith("#"):
-        continue
-    if line.startswith("export "):
-        line = line[len("export "):].strip()
-    if line.startswith("HF_TOKEN="):
-        tok = line.split("=", 1)[1].strip().strip('"').strip("'")
-        break
-if not tok:
-    tok = os.environ.get("HF_TOKEN") or os.environ.get("HF_HUB_TOKEN")
-if not tok:
-    raise SystemExit(f"HF token missing: checked {env_path}")
-# Isolate auth lookup from any cached/expired login token (e.g. old whisperx).
-home = tempfile.mkdtemp(prefix="hf_auth_")
-os.environ["HF_HOME"] = home
-os.environ["HF_TOKEN"] = tok
-os.environ["HF_HUB_TOKEN"] = tok
-from huggingface_hub import HfApi, snapshot_download
-HfApi(token=tok).model_info(repo)
-print(snapshot_download(repo_id=repo, token=tok, local_files_only=False))
-PY
-)"
-  if [[ -n "$MODEL_PATH" && -d "$MODEL_PATH" ]]; then
-    export HF_HUB_OFFLINE=1
-  fi
-fi
-
 
 resolve_vllm_py() {
   if [[ -z "$VLLM_PY" ]]; then
@@ -255,13 +192,13 @@ _main.main()'
 
 if [[ "$VLLM_USE_MODULE" == "1" ]]; then
   resolve_vllm_py
-  SERVE=("$VLLM_PY" -c "$VLLM_CPU_PATCH" serve "$MODEL_PATH"
+  SERVE=("$VLLM_PY" -c "$VLLM_CPU_PATCH" serve "$MODEL"
          --served-model-name "$SERVED_NAME"
          --host 0.0.0.0 --port "$PORT"
          --tensor-parallel-size "$TP"
          --api-key "$API_KEY")
 else
-  SERVE=("$VLLM_BIN" serve "$MODEL_PATH"
+  SERVE=("$VLLM_BIN" serve "$MODEL"
          --served-model-name "$SERVED_NAME"
          --host 0.0.0.0 --port "$PORT"
          --tensor-parallel-size "$TP"
