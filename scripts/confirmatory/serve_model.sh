@@ -3,9 +3,10 @@
 # Serve one model behind an OpenAI-compatible endpoint (vLLM).
 #
 # One script for every environment: laptop CPU, local GPU workstation,
-# ASC-5 cluster. Only the parameters differ. CPU serving needs a vLLM
-# build with CPU support; pass --device cpu so vLLM does not try to
-# auto-detect a GPU.
+# ASC-5 cluster. Only the parameters differ. When no GPU is visible the
+# script passes --device cpu automatically (vLLM cannot infer a device on
+# a CPU-only machine); --device overrides the detection. CPU serving needs
+# a vLLM build with CPU support.
 #
 #   Laptop, tiny model:   --model HuggingFaceTB/SmolLM2-135M-Instruct --device cpu --dtype float32
 #   4080, Llama 8-bit:    --model meta-llama/Llama-3.1-8B-Instruct --quant bitsandbytes
@@ -50,8 +51,8 @@ Options:
   --port PORT            HTTP port (default 8000)
   --tp N                 tensor-parallel size (default 1)
   --dtype DTYPE          float32 | float16 | bfloat16 (default: vLLM auto)
-  --device DEVICE        cpu | cuda (default: vLLM auto-detect;
-                         CPU-only machines must pass --device cpu)
+  --device DEVICE        cpu | cuda (default: cuda if a GPU is visible,
+                         otherwise cpu)
   --quant QUANT          e.g. bitsandbytes (default: none)
   --max-model-len N      context cap (default: model config)
   --gpu-mem-util F       vLLM default 0.9; lower on shared cards
@@ -90,6 +91,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$MODEL" ]] || { echo "error: --model is required" >&2; usage 1; }
+if [[ -z "$DEVICE" ]]; then
+  # vLLM raises "Failed to infer device type" when no GPU is present
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    DEVICE=""
+  else
+    DEVICE="cpu"
+  fi
+fi
 [[ -n "$SERVED_NAME" ]] || SERVED_NAME="$MODEL"
 [[ -n "$JOB_NAME" ]] || JOB_NAME="serve-$(basename "$SERVED_NAME" \
   | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed 's/-\{1,\}$//')"
