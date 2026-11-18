@@ -83,12 +83,12 @@ def _find_repo_root():
     except NameError:
         pass
     for _cand in [Path.cwd().resolve(), *Path.cwd().resolve().parents]:
-        if (_cand / "exploratory_seeds").is_dir() and (_cand / "scripts").is_dir():
+        if (_cand / "scripts" / "legacy_exploratory" / "exploratory_seeds").is_dir() and (_cand / "scripts").is_dir():
             return _cand
     return Path.cwd().resolve()
 
 
-MSG_FILE = _find_repo_root() / "exploratory_seeds" / "seed_sentences_50.json"
+MSG_FILE = _find_repo_root() / "scripts" / "legacy_exploratory" / "exploratory_seeds" / "seed_sentences_50.json"
 
 HOP = 200
 CONFIG = "temp0.8_topp0.5"

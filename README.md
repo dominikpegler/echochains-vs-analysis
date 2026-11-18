@@ -54,11 +54,6 @@ after editing the `.py`).
   - `serve_model.sh` (vLLM launcher: local GPU and ASC-5 via `--slurm`)
   - `qc_chains_confirmatory.py`, `test_confirmatory.py`
   - `vs_task_prompts.py`, `tasks_registry.py` (locked prompts)
-- `scripts/legacy_exploratory/` — pilot-era shard and embeddings machinery
-  (`run_shard_*`, `launch_shards.py`, `monitor_shards.py`, `watchdog_shards.py`,
-  `health_logger.py`, `run_vs_embeddings.py`,
-  `process_vs_embeddings_worker.py`), tied to the old
-  `~/data_export/echo-chain` layout; not used by the confirmatory pipeline.
 - `scripts/analyses/` — post-hoc computation from the shard exports:
   `write_stats_long.py`, `write_vs_axis_csv.py`, `compute_sigma.py`,
   `compute_sigma_exploratory.py`, `compute_sigma_sensitivity.py`.
@@ -69,8 +64,11 @@ after editing the `.py`).
   `make_paper_outputs.py`, `make_slide_figures.py`.
 - `scripts/py/` — jupytext sources for the tracked notebooks in `scripts/`:
   `analysis_01_descriptives_vs`, `analysis_02_hypothesis_tests_vs`,
-  `generate_chains_vs`, `corpus_sampler_vs`, `axes_validation`.
-- `legacy/` — superseded exploratory work (`analysis_01_vs`).
+  `corpus_sampler_vs`, `axes_validation`.
+- `scripts/legacy_exploratory/` — everything from the exploratory study:
+  the pilot chain generator (`generate_chains_vs.py` + notebook), the pilot
+  seeds (`exploratory_seeds/`), the shard/embeddings machinery, and the
+  old `legacy/` tree (`analysis_01_vs`).
 
 The descriptive analysis (tables, figures, `metrics_pub.json`) is
 `analysis_01_descriptives_vs`, or the staged re-export in

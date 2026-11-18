@@ -6,7 +6,7 @@ so every task stage needs a candidate-elicitation template: one call per hop
 stage, k candidates plus verbalized probabilities, JSON only. The VS-weighted
 and verbalized-mode conditions share the call text and differ ONLY in the
 selection rule, exactly as in the exploratory pilot
-(generate_chains_vs.py: SYSTEM_PROMPT_VS / USER_PROMPT_VS_TEMPLATE).
+(legacy_exploratory/generate_chains_vs.py: SYSTEM_PROMPT_VS / USER_PROMPT_VS_TEMPLATE).
 
 Direct wordings live in the canonical registry
 echochains-core/src/echochain/tasks.py (TASKS); every template here restates the
@@ -72,7 +72,7 @@ _TEMPLATES = {
         "nouns": "paraphrases",
         "key": "paraphrases",
         "stages": 1,
-        "source": "exploratory pilot (generate_chains_vs.py), unchanged",
+        "source": "exploratory pilot (legacy_exploratory/generate_chains_vs.py), unchanged",
     },
     "take_inspiration": {
         "system": (

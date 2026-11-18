@@ -15,7 +15,7 @@ the vendor default. VENDOR_DECODE holds the pinned panel's values
 --decoding vendor (the design default) resolves per model; --decoding
 default sends no sampling arguments (recorded as model_default); --decoding
 locked is the pilot-matching 0.8/0.5 pair for exploratory-style reruns.
-The exploratory pilot script `generate_chains_vs.py` stays untouched as the
+The exploratory pilot script `scripts/legacy_exploratory/generate_chains_vs.py` stays untouched as the
 exploratory record.
 
 ONE call per hop stage. Direct sends its single-turn instruction and

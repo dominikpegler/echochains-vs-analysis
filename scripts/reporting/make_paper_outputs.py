@@ -65,7 +65,7 @@ DATA_DIR = get_data_dir()
 LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
 STATS_BASE = Path(DATA_DIR, "data", "echodrift_stats")
 PUB_BASE = Path(DATA_DIR, "pub")
-MSG_FILE = REPO / "exploratory_seeds" / "seed_sentences_50.json"
+MSG_FILE = REPO / "scripts" / "legacy_exploratory" / "exploratory_seeds" / "seed_sentences_50.json"
 
 HOP = 200
 CONFIG = "temp0.8_topp0.5"
