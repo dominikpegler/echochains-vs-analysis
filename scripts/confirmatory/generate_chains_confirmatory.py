@@ -78,7 +78,7 @@ LOG SCHEMA (one JSON list per seed x chain; the hop-0 seed entry first):
            "attempts", "deviations", "from_cache"}; the top-level fields
           carry the LAST stage (compress), whose text is the transmitted one.
 
-SEED FILE SCHEMA (--seeds-file; validated on load):
+SEED FILE SCHEMA (--seeds-file, default $DATA_DIR/data/corpus/sampler/vs_confirmatory_seeds_final.jsonl; validated on load):
   {"band": "sentence" | "long", "seeds": [{"seed_id": 1, "text": "...",
     "genre": "encyclopedic" | "fiction" | "dialogue"}, ...]}
   The confirmatory seed sets themselves are built under plan step 5; the
@@ -663,6 +663,8 @@ class ChainRunner:
             self._run_hop(log, seed_id, chain_id, hop_id)
             if hop_id % self.partial_flush_every == 0 and hop_id < self.hops:
                 self._write(log, path, final=False)
+                print(f"  seed {seed_id} chain {chain_id}: hop {hop_id}/{self.hops}",
+                      flush=True)
         self._write(log, path, final=True)
         partial = path.with_suffix(".json.partial")
         if partial.exists():
@@ -731,9 +733,15 @@ class ChainRunner:
         chains = self.chains if limit_chains is None else min(self.chains,
                                                               limit_chains)
         seeds = self.seeds if limit_seeds is None else self.seeds[:limit_seeds]
+        total_chains = len(seeds) * chains
+        done_chains = 0
         for seed in seeds:
             for chain_id in range(1, chains + 1):
                 self.run_chain(seed, chain_id)
+                done_chains += 1
+                if self.hops and done_chains % max(1, total_chains // 20) == 0 or True:
+                    print(f"[{self.task}/{self.condition}] chain {done_chains}/{total_chains} done",
+                          flush=True)
         print(f"cell complete: {self.task} / {self.condition} "
               f"({len(seeds)} seeds x {chains} chains x {self.hops} hops; "
               f"{self.cell.successes} successful calls, "
@@ -766,6 +774,10 @@ def load_seed_file(path: Path) -> tuple[str, list[dict]]:
         if not isinstance(seed["text"], str) or not seed["text"].strip():
             raise ValueError(f"{path}: seed #{i} has an empty text")
     return band, seeds
+
+
+def default_seeds_file() -> Path:
+    return get_data_dir() / "data" / "corpus" / "sampler" / "vs_confirmatory_seeds_final.jsonl"
 
 
 def get_data_dir() -> Path:
@@ -832,8 +844,10 @@ def main(argv=None) -> int:
                         default="azure")
     parser.add_argument("--model", required=True,
                         help="model or deployment identifier (pinned in logs)")
-    parser.add_argument("--seeds-file", required=True,
-                        help="seed JSON in the schema documented in the module docstring")
+    parser.add_argument("--seeds-file", default=None,
+                        help="seed JSON in the schema documented in the module docstring "
+                             "(default: $DATA_DIR/data/corpus/sampler/vs_confirmatory_seeds_final.jsonl, "
+                             "the sampler's draw output)")
     parser.add_argument("--chains", type=int, default=5)
     parser.add_argument("--hops", type=int, default=200)
     parser.add_argument("--replicate", type=int, default=0)
@@ -869,7 +883,8 @@ def main(argv=None) -> int:
     else:
         parser.error("give both --task and --condition, or --all-cells")
 
-    band, seeds = load_seed_file(Path(args.seeds_file))
+    seeds_file = Path(args.seeds_file) if args.seeds_file else default_seeds_file()
+    band, seeds = load_seed_file(seeds_file)
     for task, _ in cells:
         if band != TASK_BANDS[task]:
             parser.error(f"seed band {band!r} does not match task {task!r}'s "
