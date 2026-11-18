@@ -3,10 +3,15 @@
 # Serve one model behind an OpenAI-compatible endpoint (vLLM).
 #
 # One script for every environment: laptop CPU, local GPU workstation,
-# ASC-5 cluster. Only the parameters differ. When no GPU is visible the
-# script passes --device cpu automatically (vLLM cannot infer a device on
-# a CPU-only machine); --device overrides the detection. CPU serving needs
-# a vLLM build with CPU support.
+# ASC-5 cluster. Only the parameters differ. ENGINE=vllm (default) serves
+# with vLLM; ENGINE=ollama serves the same model through Ollama's
+# OpenAI-compatible API, which is the practical route on CPU-only laptops
+# (the vLLM wheel needs a CPU build there). When no GPU is visible the
+# script selects cpu automatically (vLLM cannot infer a device on a
+# CPU-only machine); --device overrides the detection. The device is
+# exported as VLLM_TARGET_DEVICE because vLLM resolves its platform at
+# import time, before any CLI parsing. CPU serving needs a vLLM build
+# with CPU support.
 #
 #   Laptop, tiny model:   --model HuggingFaceTB/SmolLM2-135M-Instruct --device cpu --dtype float32
 #   4080, Llama 8-bit:    --model meta-llama/Llama-3.1-8B-Instruct --quant bitsandbytes
@@ -39,6 +44,7 @@ PARTITION="${PARTITION:-zen3_0512_a100x2}"
 TIME="${TIME:-3-00:00:00}"
 JOB_NAME="${JOB_NAME:-}"
 VLLM_BIN="${VLLM_BIN:-vllm}"
+ENGINE="${ENGINE:-vllm}"
 CHECK=0
 
 usage() {
@@ -52,7 +58,9 @@ Options:
   --tp N                 tensor-parallel size (default 1)
   --dtype DTYPE          float32 | float16 | bfloat16 (default: vLLM auto)
   --device DEVICE        cpu | cuda (default: cuda if a GPU is visible,
-                         otherwise cpu)
+                         otherwise cpu); exported as VLLM_TARGET_DEVICE
+                         because vllm serve has no --device flag
+  --engine ENGINE        vllm | ollama (default: vllm)
   --quant QUANT          e.g. bitsandbytes (default: none)
   --max-model-len N      context cap (default: model config)
   --gpu-mem-util F       vLLM default 0.9; lower on shared cards
@@ -75,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --tp)            TP="$2"; shift 2 ;;
     --dtype)         DTYPE="$2"; shift 2 ;;
     --device)        DEVICE="$2"; shift 2 ;;
+    --engine)        ENGINE="$2"; shift 2 ;;
     --quant)         QUANT="$2"; shift 2 ;;
     --max-model-len) MAX_MODEL_LEN="$2"; shift 2 ;;
     --gpu-mem-util)  GPU_MEM_UTIL="$2"; shift 2 ;;
@@ -91,8 +100,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$MODEL" ]] || { echo "error: --model is required" >&2; usage 1; }
-if [[ -z "$DEVICE" ]]; then
-  # vLLM raises "Failed to infer device type" when no GPU is present
+if [[ -z "$DEVICE" && "$SLURM" != "1" ]]; then
+  # vLLM raises "Failed to infer device type" when no GPU is present.
+  # sbatch jobs detect inside the allocation (the submit host may be GPU-less).
   if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
     DEVICE=""
   else
@@ -103,12 +113,48 @@ fi
 [[ -n "$JOB_NAME" ]] || JOB_NAME="serve-$(basename "$SERVED_NAME" \
   | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed 's/-\{1,\}$//')"
 
+if [[ "$ENGINE" == "ollama" ]]; then
+  command -v ollama >/dev/null || { echo "error: ollama not on PATH" >&2; exit 1; }
+  [[ "$PORT" == "8000" ]] && PORT=11434   # ollama's convention unless overridden
+  echo "engine:       ollama"
+  echo "model:        $MODEL"
+  echo "endpoint:     http://0.0.0.0:$PORT/v1"
+  if [[ "$CHECK" == "1" ]]; then
+    echo "--- command (not run) ---"
+    printf 'OLLAMA_HOST=0.0.0.0:%s ollama serve   # then ollama pull %s\n' "$PORT" "$MODEL"
+    exit 0
+  fi
+  export OLLAMA_HOST="0.0.0.0:$PORT"
+  server_pid=""
+  if ! ollama list >/dev/null 2>&1; then
+    ollama serve >/dev/null 2>&1 &
+    server_pid=$!
+    for _ in $(seq 1 60); do
+      ollama list >/dev/null 2>&1 && break
+      sleep 1
+    done
+    if ! ollama list >/dev/null 2>&1; then
+      echo "error: ollama server did not start on port $PORT" >&2
+      exit 1
+    fi
+  fi
+  if ! ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$MODEL"; then
+    echo "pulling $MODEL ..."
+    ollama pull "$MODEL" || { echo "error: ollama pull failed" >&2; exit 1; }
+  fi
+  if [[ -n "$server_pid" ]]; then
+    wait "$server_pid"
+  else
+    echo "ollama server already running at $OLLAMA_HOST"
+  fi
+  exit 0
+fi
+
 SERVE=("$VLLM_BIN" serve "$MODEL"
        --served-model-name "$SERVED_NAME"
        --host 0.0.0.0 --port "$PORT"
        --tensor-parallel-size "$TP"
        --api-key "$API_KEY")
-[[ -n "$DEVICE" ]]        && SERVE+=(--device "$DEVICE")
 [[ -n "$DTYPE" ]]         && SERVE+=(--dtype "$DTYPE")
 [[ -n "$QUANT" ]]         && SERVE+=(--quantization "$QUANT")
 [[ -n "$MAX_MODEL_LEN" ]] && SERVE+=(--max-model-len "$MAX_MODEL_LEN")
@@ -125,6 +171,7 @@ slurm_script() {
   printf '#SBATCH --gres=gpu:%s\n' "$TP"
   printf '#SBATCH --time=%s\n' "$TIME"
   printf '#SBATCH --output=%s-%%j.log\n\n' "$JOB_NAME"
+  [[ -n "$DEVICE" ]] && printf 'export VLLM_TARGET_DEVICE=%s\n' "$DEVICE"
   render_cmd; printf '\n'
 }
 
@@ -152,6 +199,13 @@ if [[ "$SLURM" == "1" ]]; then
   echo "submitting: $tmp"
   sbatch "$tmp"
 else
+  [[ -n "$DEVICE" ]] && export VLLM_TARGET_DEVICE="$DEVICE"
+  if [[ "$DEVICE" == "cpu" ]]; then
+    echo "note: CPU serving needs a vLLM build with CPU support" >&2
+    echo "      (pip install vllm-cpu). If this build lacks it, rerun" >&2
+    echo "      with --engine ollama." >&2
+  fi
+  export -n VLLM_BIN 2>/dev/null || true
   command -v "$VLLM_BIN" >/dev/null || {
     echo "error: '$VLLM_BIN' not on PATH (pip install vllm, or set VLLM_BIN)" >&2
     exit 1
