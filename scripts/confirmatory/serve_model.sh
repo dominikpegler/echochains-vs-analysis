@@ -30,7 +30,7 @@ set -euo pipefail
 
 MODEL="${MODEL:-}"
 SERVED_NAME="${SERVED_NAME:-}"
-PORT="${PORT:-8000}"
+PORT="${PORT:-8558}"
 TP="${TP:-1}"
 DTYPE="${DTYPE:-}"
 DEVICE="${DEVICE:-}"
@@ -54,7 +54,7 @@ Usage: serve_model.sh --model MODEL [options]
 Options:
   --model MODEL          HF id or local path (required)
   --served-name NAME     name the API exposes (default: MODEL)
-  --port PORT            HTTP port (default 8000)
+  --port PORT            HTTP port (default 8558)
   --tp N                 tensor-parallel size (default 1)
   --dtype DTYPE          float32 | float16 | bfloat16 (default: vLLM auto)
   --device DEVICE        cpu | cuda (default: cuda if a GPU is visible,
@@ -139,7 +139,7 @@ if [[ "$ENGINE" == "ollama" ]]; then
   if ! ollama list >/dev/null 2>&1; then
     if port_busy "$PORT"; then
       echo "error: port $PORT is in use and no ollama server answers there;" >&2
-      echo "       pass a free --port (e.g. 11434)" >&2
+      echo "       pass a free --port (any unused port)" >&2
       exit 1
     fi
     ollama serve >/dev/null 2>&1 &
