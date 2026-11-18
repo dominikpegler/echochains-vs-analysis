@@ -68,14 +68,14 @@
 #
 # ## How to run it
 #
-# From a terminal, the real preregistered draw needs only the frozen manifest
-# (all other flags default to the preregistered values: seed 20261031,
-# quota 18 / reserve 12 per cell, source cap 3, author cap 6; output goes to
-# `$DATA_DIR/data/corpus/sampler`):
+# From a terminal, the real preregistered draw is a zero-argument call:
+# the frozen manifest `$DATA_DIR/data/corpus/vs_candidate_manifest.jsonl`,
+# the draw seed 20261031, quota 18 / reserve 12 per cell, the source/author
+# caps, and the output directory `$DATA_DIR/data/corpus/sampler` are all
+# defaults:
 #
 # ```bash
-# python scripts/analysis/corpus_sampler_vs.py \
-#     --manifest $DATA_DIR/data/corpus/vs_candidate_manifest.jsonl
+# python scripts/analysis/corpus_sampler_vs.py
 # ```
 #
 # Output always goes to `$DATA_DIR/data/corpus/sampler` (the DATA_DIR
@@ -150,9 +150,10 @@ BANDS = {
 QUOTA_PER_CELL = 18
 RESERVE_PER_CELL = 12
 DEFAULT_SEED = 20261031
-DEFAULT_OUTDIR = (Path(os.environ.get(
+_DATA_DIR = Path(os.environ.get(
     "DATA_DIR", str(Path.home() / "Dropbox" / "data_export" / "echochains")))
-    / "data" / "corpus" / "sampler")
+DEFAULT_OUTDIR = _DATA_DIR / "data" / "corpus" / "sampler"
+DEFAULT_MANIFEST = _DATA_DIR / "data" / "corpus" / "vs_candidate_manifest.jsonl"
 
 # Source caps apply within each band and genre. They prevent one article,
 # book, film, or author from dominating a cell. The values are intentionally
@@ -641,8 +642,10 @@ def write_outputs(selected: pd.DataFrame, reserves: pd.DataFrame, rejects: pd.Da
 # %%
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--manifest", action="append", type=Path, required=True,
-                    help="candidate manifest (.jsonl, .json, .csv, .tsv); repeatable")
+    ap.add_argument("--manifest", action="append", type=Path, default=None,
+                    help="candidate manifest (.jsonl, .json, .csv, .tsv); "
+                         "repeatable. Default: $DATA_DIR/data/corpus/"
+                         "vs_candidate_manifest.jsonl (the frozen manifest)")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     ap.add_argument("--quota", type=int, default=QUOTA_PER_CELL)
     ap.add_argument("--reserve", type=int, default=RESERVE_PER_CELL)
@@ -651,12 +654,13 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--workdir", type=Path, default=None,
                     help="scratch dir for spooling screened rows (default: temp dir)")
     args = ap.parse_args(argv)
+    manifests = args.manifest or [DEFAULT_MANIFEST]
 
     cfg = DrawConfig(seed=args.seed, quota_per_cell=args.quota,
                      reserve_per_cell=args.reserve, source_cap=args.source_cap,
                      author_cap=args.author_cap, workdir=args.workdir)
     outdir = DEFAULT_OUTDIR
-    selected, reserves, rejects, screen_failures, n_screened = draw_corpus_stream(args.manifest, cfg)
+    selected, reserves, rejects, screen_failures, n_screened = draw_corpus_stream(manifests, cfg)
     write_outputs(selected, reserves, rejects, screen_failures, outdir, cfg, n_screened)
     print("selected")
     print(quota_table(selected).to_string())
