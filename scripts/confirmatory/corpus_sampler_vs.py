@@ -123,6 +123,7 @@ import random
 import re
 import shutil
 import tempfile
+import time
 
 import nltk
 
@@ -137,6 +138,18 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover - tqdm is in the env; degrade quietly
+    def tqdm(iterable=None, **kw):
+        return iterable if iterable is not None else _NullTqdm()
+
+    class _NullTqdm:
+        def __init__(self, **kw): pass
+        def update(self, n=1): pass
+        def close(self): pass
+        def set_postfix(self, *a, **k): pass
 
 # %% [markdown]
 # ## Locked protocol constants
@@ -341,8 +354,14 @@ def screen_and_group(paths: list[Path], phase: str,
     n_before = 0
     fail_writer = None
     fail_header_written = False
+    total = sum(1 for path in paths for _ in path.open("r", encoding="utf-8")) \
+        if all(p.suffix.lower() == ".jsonl" for p in paths) else None
     try:
-        for row in stream_norm_rows(paths):
+        rows = stream_norm_rows(paths)
+        if total is not None:
+            rows = tqdm(rows, total=total, desc=f"screen pass ({phase})",
+                        unit="rows", mininterval=5.0)
+        for row in rows:
             if first:
                 n_before += 1
                 hash_counter[row["text_hash"]] += 1
@@ -410,6 +429,9 @@ def draw_corpus_stream(paths: list[Path], cfg: DrawConfig) -> tuple[pd.DataFrame
             if phase == "short":
                 n_screened = n_this
             fail_frames.append(fails_df)
+            n_cells = sum(1 for k in cells if k[0] == phase)
+            print(f"[{phase} pass done] screened={n_this} cells_with_rows={n_cells} "
+                  f"screen_failures={len(fails_df)}", flush=True)
             for genre in GENRES:
                 spool = cells.get((phase, genre))
                 if spool is None:
@@ -660,7 +682,9 @@ def main(argv: list[str] | None = None) -> None:
                      reserve_per_cell=args.reserve, source_cap=args.source_cap,
                      author_cap=args.author_cap, workdir=args.workdir)
     outdir = DEFAULT_OUTDIR
+    t0 = time.time()
     selected, reserves, rejects, screen_failures, n_screened = draw_corpus_stream(manifests, cfg)
+    print(f"[draw] {n_screened} rows screened in {time.time()-t0:.0f}s", flush=True)
     write_outputs(selected, reserves, rejects, screen_failures, outdir, cfg, n_screened)
     print("selected")
     print(quota_table(selected).to_string())
