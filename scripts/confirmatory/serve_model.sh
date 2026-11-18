@@ -162,13 +162,17 @@ if [[ "$CHECK" != "1" && "$HF_SNAPSHOT" != "never" && "$MODEL" != /* && "$MODEL"
     fi
   }
   _py="$(resolve_vllm_py_for_snapshot)"
-  echo "resolving HF snapshot for $MODEL ..." >&2
-  MODEL_PATH="$($_py - "$MODEL" <<'PY'
+  echo "resolving HF snapshot for $MODEL with $_py ..." >&2
+  MODEL_PATH="$(HF_TOKEN="${HF_TOKEN:-}" HF_HUB_TOKEN="${HF_TOKEN:-${HF_HUB_TOKEN:-}}" $_py - "$MODEL" <<'PY'
 import os, sys
-from huggingface_hub import snapshot_download
+from huggingface_hub import HfApi, snapshot_download
 repo = sys.argv[1]
 tok = os.environ.get("HF_TOKEN") or os.environ.get("HF_HUB_TOKEN")
-print(snapshot_download(repo_id=repo, token=tok))
+if not tok:
+    raise SystemExit("HF token missing: set HF_TOKEN in the repo .env")
+# Force the explicit token; do not rely on any cached login token.
+HfApi(token=tok).model_info(repo)
+print(snapshot_download(repo_id=repo, token=tok, local_files_only=False))
 PY
 )"
 fi
