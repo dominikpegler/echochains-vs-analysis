@@ -30,10 +30,19 @@ set -euo pipefail
 # which is relative when the script is invoked as ./serve_model.sh.
 script_abs="$(readlink -f "${BASH_SOURCE[0]}")"
 repo_root="$(cd "$(dirname "$script_abs")/../.." && pwd)"
-if [[ -f "$repo_root/.env" ]]; then
-  set -a
-  source "$repo_root/.env"
-  set +a
+if [[ -z "${HF_TOKEN:-}" && -f "$repo_root/.env" ]]; then
+  # Read only HF_TOKEN from .env so a provider API_KEY does not become the
+  # local OpenAI-compatible server key.
+  HF_TOKEN="$(python3 - "$repo_root/.env" <<'PY'
+from pathlib import Path
+import sys
+for line in Path(sys.argv[1]).read_text().splitlines():
+    if line.startswith("HF_TOKEN="):
+        v = line.split("=", 1)[1].strip().strip('"').strip("'")
+        print(v)
+        break
+PY
+)"
 fi
 # vLLM/transformers read HF_HUB_TOKEN (older builds only HF_TOKEN); set both.
 if [[ -n "${HF_TOKEN:-}" ]]; then
@@ -194,6 +203,7 @@ else
          --tensor-parallel-size "$TP"
          --api-key "$API_KEY")
 fi
+[[ -n "${HF_TOKEN:-}" ]]  && SERVE+=(--hf-token "$HF_TOKEN")
 [[ -n "$DTYPE" ]]         && SERVE+=(--dtype "$DTYPE")
 [[ -n "$QUANT" ]]         && SERVE+=(--quantization "$QUANT")
 [[ -n "$MAX_MODEL_LEN" ]] && SERVE+=(--max-model-len "$MAX_MODEL_LEN")
@@ -201,7 +211,20 @@ fi
 # shellcheck disable=SC2206  # EXTRA_ARGS is intentionally word-split
 [[ -n "$EXTRA_ARGS" ]]    && SERVE+=($EXTRA_ARGS)
 
-render_cmd() { printf '%q ' "${SERVE[@]}"; }
+render_cmd() {
+  local mask_next=0
+  for arg in "${SERVE[@]}"; do
+    if [[ "$mask_next" == "1" ]]; then
+      printf '<set> '
+      mask_next=0
+      continue
+    fi
+    case "$arg" in
+      --api-key|--hf-token) printf '%q ' "$arg"; mask_next=1 ;;
+      *) printf '%q ' "$arg" ;;
+    esac
+  done
+}
 
 slurm_script() {
   printf '#!/usr/bin/env bash\n'
