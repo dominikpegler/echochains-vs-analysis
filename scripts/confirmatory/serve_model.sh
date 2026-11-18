@@ -26,8 +26,10 @@
 set -euo pipefail
 
 # Load the repo's .env (HF_TOKEN etc.) when present; real env vars win.
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd "$script_dir/../.." && pwd)"
+# NOTE: resolve repo_root from the absolute script path, not BASH_SOURCE,
+# which is relative when the script is invoked as ./serve_model.sh.
+script_abs="$(readlink -f "${BASH_SOURCE[0]}")"
+repo_root="$(cd "$(dirname "$script_abs")/../.." && pwd)"
 if [[ -f "$repo_root/.env" ]]; then
   set -a
   source "$repo_root/.env"
