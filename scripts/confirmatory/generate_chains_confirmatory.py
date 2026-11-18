@@ -615,7 +615,8 @@ class ChainRunner:
 
     # -- helpers ------------------------------------------------------------
     def _chain_path(self, seed_id: int, chain_id: int) -> Path:
-        name = f"MSG_{seed_id:03d}_chain_{chain_id:03d}"
+        sid = f"{seed_id:03d}" if isinstance(seed_id, int) else str(seed_id)
+        name = f"MSG_{sid}_chain_{chain_id:03d}"
         if self.replicate:
             name += f"_rep{self.replicate}"  # QC reruns never clobber the original
         return self.out_dir / f"{name}.json"
