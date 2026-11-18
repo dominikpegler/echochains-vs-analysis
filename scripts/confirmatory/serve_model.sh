@@ -28,10 +28,15 @@ set -euo pipefail
 # Load the repo's .env (HF_TOKEN etc.) when present; real env vars win.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
-if [[ -z "${HF_TOKEN:-}" && -f "$repo_root/.env" ]]; then
+if [[ -f "$repo_root/.env" ]]; then
   set -a
   source "$repo_root/.env"
   set +a
+fi
+# vLLM/transformers read HF_HUB_TOKEN (older builds only HF_TOKEN); set both.
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  export HF_HUB_TOKEN="$HF_TOKEN"
+  export HF_TOKEN="$HF_TOKEN"
 fi
 
 MODEL="${MODEL:-}"
