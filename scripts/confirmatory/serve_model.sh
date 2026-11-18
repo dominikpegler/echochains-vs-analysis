@@ -176,7 +176,7 @@ if [[ "$CHECK" != "1" && "$HF_SNAPSHOT" != "never" && "$MODEL" != /* && "$MODEL"
 import os, sys, tempfile
 from pathlib import Path
 repo = sys.argv[1]
-env_path = Path(os.environ["SERVE_ENV_FILE"])
+env_path = Path(sys.argv[2])
 tok = None
 for raw in env_path.read_text().splitlines():
     line = raw.strip()
