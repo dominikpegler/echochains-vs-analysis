@@ -755,12 +755,27 @@ class ChainRunner:
 BANDS = ("sentence", "long")
 
 
+# The sampler's draw writes one JSON record per line (JSONL) with the band
+# per row ("short"/"long"); older hand-written files are a single JSON object
+# {"band": ..., "seeds": [...]} with band "sentence"/"long". Accept both.
+BAND_ALIASES = {"short": "sentence", "sentence": "sentence", "long": "long"}
+
+
 def load_seed_file(path: Path) -> tuple[str, list[dict]]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    band = data.get("band")
+    if path.suffix == ".jsonl":
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()]
+        bands = {BAND_ALIASES.get(r.get("band"), r.get("band")) for r in rows}
+        if len(bands) != 1:
+            raise ValueError(f"{path}: mixed bands in JSONL seed file: {sorted(bands)}")
+        band = bands.pop()
+        seeds = rows
+    else:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        band = BAND_ALIASES.get(data.get("band"), data.get("band"))
+        seeds = data.get("seeds")
     if band not in BANDS:
         raise ValueError(f"{path}: missing/unknown band; expected one of {BANDS}")
-    seeds = data.get("seeds")
     if not isinstance(seeds, list) or not seeds:
         raise ValueError(f"{path}: missing a non-empty 'seeds' list")
     seen = set()
