@@ -761,11 +761,18 @@ BANDS = ("sentence", "long")
 BAND_ALIASES = {"short": "sentence", "sentence": "sentence", "long": "long"}
 
 
-def load_seed_file(path: Path) -> tuple[str, list[dict]]:
+def load_seed_file(path: Path, band: str | None = None) -> tuple[str, list[dict]]:
+    """Load a seed file. The sampler's combined draw holds both bands in one
+    JSONL file; pass `band` ("sentence"/"long") to select the task's set."""
     if path.suffix == ".jsonl":
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
                 if line.strip()]
+        if band is not None:
+            rows = [r for r in rows
+                    if BAND_ALIASES.get(r.get("band"), r.get("band")) == band]
         bands = {BAND_ALIASES.get(r.get("band"), r.get("band")) for r in rows}
+        if not bands:
+            raise ValueError(f"{path}: no rows for band {band!r}")
         if len(bands) != 1:
             raise ValueError(f"{path}: mixed bands in JSONL seed file: {sorted(bands)}")
         band = bands.pop()
@@ -899,7 +906,8 @@ def main(argv=None) -> int:
         parser.error("give both --task and --condition, or --all-cells")
 
     seeds_file = Path(args.seeds_file) if args.seeds_file else default_seeds_file()
-    band, seeds = load_seed_file(seeds_file)
+    band_hint = TASK_BANDS[args.task] if args.task and not args.all_cells else None
+    band, seeds = load_seed_file(seeds_file, band=band_hint)
     for task, _ in cells:
         if band != TASK_BANDS[task]:
             parser.error(f"seed band {band!r} does not match task {task!r}'s "
