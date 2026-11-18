@@ -48,17 +48,18 @@ installable library. Everything imports the shared `echochain` package and
 tracked `.ipynb` is its companion (run `jupytext --sync scripts/analysis/<name>.py`
 after editing the `.py`).
 
-- `scripts/confirmatory/` — confirmatory collection (generation, serving, QC):
+- `scripts/confirmatory/` — confirmatory study setup + collection:
+  - `corpus_sampler_vs.py` / `.ipynb` — preregistered seed draw
+  - `axes_validation.ipynb` — semantic-axis validation before the freeze
   - `generate_chains_confirmatory.py` (frozen implementation) and
     `generate_chains_confirmatory.ipynb` (local prototype driver)
   - `serve_model.sh` (vLLM launcher: local GPU and ASC-5 via `--slurm`)
   - `qc_chains_confirmatory.py`, `test_confirmatory.py`
   - `vs_task_prompts.py`, `tasks_registry.py` (locked prompts)
 - `scripts/analysis/` — analysis notebooks with their jupytext `.py` twins
-  (`analysis_01_descriptives_vs`, `analysis_02_hypothesis_tests_vs`,
-  `axes_validation`, `corpus_sampler_vs`), plus post-hoc computation from the
-  shard exports (`write_stats_long.py`, `write_vs_axis_csv.py`,
-  `compute_sigma.py`, `compute_sigma_exploratory.py`,
+  (`analysis_01_descriptives_vs`, `analysis_02_hypothesis_tests_vs`), plus
+  post-hoc computation from the shard exports (`write_stats_long.py`,
+  `write_vs_axis_csv.py`, `compute_sigma.py`, `compute_sigma_exploratory.py`,
   `compute_sigma_sensitivity.py`).
 - `scripts/design/` — study design, sample-size and power analysis:
   `design_size_vs.py`, `power_analysis_design_vs.py`,
