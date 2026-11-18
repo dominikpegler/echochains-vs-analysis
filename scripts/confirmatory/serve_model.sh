@@ -2,11 +2,8 @@
 # ---------------------------------------------------------------------------
 # Serve one model behind an OpenAI-compatible endpoint (vLLM).
 #
-# One script for every environment: laptop CPU, local GPU workstation,
-# ASC-5 cluster. Only the parameters differ. ENGINE=vllm (default) serves
-# with vLLM; ENGINE=ollama serves the same model through Ollama's
-# OpenAI-compatible API, which is the practical route on CPU-only laptops
-# (the vLLM wheel needs a CPU build there). When no GPU is visible the
+# One script for every environment: local GPU workstation and the ASC-5
+# cluster. Only the parameters differ. When no GPU is visible the
 # script selects cpu automatically (vLLM cannot infer a device on a
 # CPU-only machine); --device overrides the detection. The device is
 # exported as VLLM_TARGET_DEVICE because vLLM resolves its platform at
@@ -46,7 +43,6 @@ JOB_NAME="${JOB_NAME:-}"
 VLLM_BIN="${VLLM_BIN:-vllm}"
 VLLM_PY="${VLLM_PY:-}"
 VLLM_USE_MODULE="${VLLM_USE_MODULE:-}"
-ENGINE="${ENGINE:-vllm}"
 CHECK=0
 
 usage() {
@@ -62,7 +58,6 @@ Options:
   --device DEVICE        cpu | cuda (default: cuda if a GPU is visible,
                          otherwise cpu); exported as VLLM_TARGET_DEVICE
                          because vllm serve has no --device flag
-  --engine ENGINE        vllm | ollama (default: vllm)
   --python PY            python interpreter to use with --module (default:
                          the python next to $VLLM_BIN, or python3)
   --module               run vLLM via 'python -m vllm.entrypoints.cli.main'
@@ -90,7 +85,6 @@ while [[ $# -gt 0 ]]; do
     --tp)            TP="$2"; shift 2 ;;
     --dtype)         DTYPE="$2"; shift 2 ;;
     --device)        DEVICE="$2"; shift 2 ;;
-    --engine)        ENGINE="$2"; shift 2 ;;
     --python)        VLLM_PY="$2"; shift 2 ;;
     --module)        VLLM_USE_MODULE=1; shift ;;
     --no-module)     VLLM_USE_MODULE=0; shift ;;
@@ -124,57 +118,6 @@ fi
   | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed 's/-\{1,\}$//')"
 
 
-port_busy() {
-  # 0 = something is listening on 127.0.0.1:$1
-  python3 - "$1" <<'PY' 2>/dev/null
-import socket, sys
-s = socket.socket()
-s.settimeout(1.0)
-sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)
-PY
-}
-
-if [[ "$ENGINE" == "ollama" ]]; then
-  command -v ollama >/dev/null || { echo "error: ollama not on PATH" >&2; exit 1; }
-  echo "engine:       ollama"
-  echo "model:        $MODEL"
-  echo "endpoint:     http://0.0.0.0:$PORT/v1"
-  if [[ "$CHECK" == "1" ]]; then
-    echo "--- command (not run) ---"
-    printf 'OLLAMA_HOST=0.0.0.0:%s ollama serve   # then ollama pull %s\n' "$PORT" "$MODEL"
-    exit 0
-  fi
-  export OLLAMA_HOST="0.0.0.0:$PORT"
-  server_pid=""
-  if ! ollama list >/dev/null 2>&1; then
-    if port_busy "$PORT"; then
-      echo "error: port $PORT is in use and no ollama server answers there;" >&2
-      echo "       pass a free --port (any unused port)" >&2
-      exit 1
-    fi
-    ollama serve >/dev/null 2>&1 &
-    server_pid=$!
-    for _ in $(seq 1 60); do
-      ollama list >/dev/null 2>&1 && break
-      sleep 1
-    done
-    if ! ollama list >/dev/null 2>&1; then
-      echo "error: ollama server did not start on port $PORT" >&2
-      exit 1
-    fi
-  fi
-  if ! ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$MODEL"; then
-    echo "pulling $MODEL ..."
-    ollama pull "$MODEL" || { echo "error: ollama pull failed" >&2; exit 1; }
-  fi
-  if [[ -n "$server_pid" ]]; then
-    wait "$server_pid"
-  else
-    echo "ollama server already running at $OLLAMA_HOST"
-  fi
-  exit 0
-fi
-
 resolve_vllm_py() {
   if [[ -z "$VLLM_PY" ]]; then
     local bin; bin="$(command -v "$VLLM_BIN" 2>/dev/null || true)"
@@ -189,6 +132,12 @@ resolve_vllm_py() {
 # vllm-cpu wheels expose metadata as 'vllm-cpu', so the 'vllm' console script
 # crashes at startup; fall back to 'python -m vllm.entrypoints.cli.main'.
 if [[ -z "$VLLM_USE_MODULE" ]]; then
+  if [[ "$CHECK" != "1" ]]; then
+    command -v "$VLLM_BIN" >/dev/null 2>&1 || {
+      echo "error: '$VLLM_BIN' not on PATH (activate the env or set VLLM_BIN)" >&2
+      exit 1
+    }
+  fi
   resolve_vllm_py
   if "$VLLM_PY" -c "import importlib.metadata as m; m.version('vllm')"         >/dev/null 2>&1; then
     VLLM_USE_MODULE=0
@@ -276,8 +225,8 @@ else
   [[ -n "$DEVICE" ]] && export VLLM_TARGET_DEVICE="$DEVICE"
   if [[ "$DEVICE" == "cpu" ]]; then
     echo "note: CPU serving needs a vLLM build with CPU support" >&2
-    echo "      (pip install vllm-cpu). If this build lacks it, rerun" >&2
-    echo "      with --engine ollama." >&2
+    echo "      (vllm-cpu plus a CPU Triton build). GPU hosts do not" >&2
+    echo "      need this." >&2
   fi
   export -n VLLM_BIN VLLM_PY VLLM_USE_MODULE 2>/dev/null || true
   if [[ "$VLLM_USE_MODULE" == "1" ]]; then

@@ -51,7 +51,7 @@ after editing the `.py`).
 - `scripts/confirmatory/` — confirmatory collection (generation, serving, QC):
   - `generate_chains_confirmatory.py` (frozen implementation) and
     `generate_chains_confirmatory.ipynb` (local prototype driver)
-  - `serve_model.sh` (vLLM/Ollama launcher: laptop CPU, local GPU, ASC-5 via `--slurm`)
+  - `serve_model.sh` (vLLM launcher: local GPU and ASC-5 via `--slurm`)
   - `qc_chains_confirmatory.py`, `test_confirmatory.py`
   - `vs_task_prompts.py`, `tasks_registry.py` (locked prompts)
 - `scripts/legacy_exploratory/` — pilot-era shard and embeddings machinery
