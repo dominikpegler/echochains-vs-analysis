@@ -36,7 +36,12 @@ if [[ -z "${HF_TOKEN:-}" && -f "$repo_root/.env" ]]; then
   HF_TOKEN="$(python3 - "$repo_root/.env" <<'PY'
 from pathlib import Path
 import sys
-for line in Path(sys.argv[1]).read_text().splitlines():
+for raw in Path(sys.argv[1]).read_text().splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    if line.startswith("export "):
+        line = line[len("export "):].strip()
     if line.startswith("HF_TOKEN="):
         v = line.split("=", 1)[1].strip().strip('"').strip("'")
         print(v)
@@ -44,11 +49,15 @@ for line in Path(sys.argv[1]).read_text().splitlines():
 PY
 )"
 fi
-# vLLM/transformers read HF_HUB_TOKEN (older builds only HF_TOKEN); set both.
-if [[ -n "${HF_TOKEN:-}" ]]; then
-  export HF_HUB_TOKEN="$HF_TOKEN"
-  export HF_TOKEN="$HF_TOKEN"
+if [[ -z "${HF_TOKEN:-}" ]]; then
+  echo "error: HF_TOKEN not found. Checked $repo_root/.env" >&2
+  echo "       Add HF_TOKEN=... there or export HF_TOKEN before running." >&2
+  exit 1
 fi
+# vLLM/transformers read HF_HUB_TOKEN (older builds only HF_TOKEN); set both.
+export HF_HUB_TOKEN="$HF_TOKEN"
+export HF_TOKEN="$HF_TOKEN"
+echo "HF token loaded from ${repo_root}/.env" >&2
 
 MODEL="${MODEL:-}"
 SERVED_NAME="${SERVED_NAME:-}"
