@@ -1,9 +1,9 @@
 """Compute Sigma (between-chain variance) summaries for the VS paper.
 
 Usage:
-    python scripts/analyses/compute_sigma.py direct            # base (Direct) stats dir
-    python scripts/analyses/compute_sigma.py vs_weighted
-    python scripts/analyses/compute_sigma.py vs_argmax
+    python scripts/analysis/compute_sigma.py direct            # base (Direct) stats dir
+    python scripts/analysis/compute_sigma.py vs_weighted
+    python scripts/analysis/compute_sigma.py vs_argmax
 
 For each arm it reads STATS_DIR/metrics_cumulative_long.csv and
 STATS_DIR/axis_cumulative_long.csv and writes three files:

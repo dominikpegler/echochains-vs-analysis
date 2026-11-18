@@ -8,7 +8,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.3
+#       jupytext_version: 1.18.1
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -71,7 +71,7 @@
 # From a terminal, pass at least one manifest:
 #
 # ```bash
-# python scripts/py/corpus_sampler_vs.py --manifest /path/to/frozen_candidates.jsonl
+# python scripts/analysis/corpus_sampler_vs.py --manifest /path/to/frozen_candidates.jsonl
 # ```
 #
 # The default output directory is `$DATA_DIR/data/corpus/sampler`; pass
@@ -80,7 +80,8 @@
 # For a small interface test, use lower quotas:
 #
 # ```bash
-# python scripts/py/corpus_sampler_vs.py --manifest /path/to/test_candidates.jsonl \
+# python scripts/analysis/corpus_sampler_vs.py --manifest /path/to/test_candidates.jsonl \
+#     --workdir /scratch/sampler_work   # optional: keep screened rows on disk, not in RAM
 #   --outdir /tmp/opencode/corpus_sampler_test --quota 2 --reserve 1
 # ```
 #
@@ -118,6 +119,8 @@ import math
 import os
 import random
 import re
+import shutil
+import tempfile
 
 import nltk
 
@@ -307,7 +310,9 @@ def stream_norm_rows(paths: list[Path]):
 
 
 def screen_and_group(paths: list[Path], phase: str,
-                     hash_counter: Counter[str]) -> tuple[dict, pd.DataFrame, int]:
+                     hash_counter: Counter[str],
+                     workdir: Path | None = None
+                     ) -> tuple[dict[tuple[str, str], Path], pd.DataFrame, int]:
     """One streaming pass over the manifest for one phase ("short" or
     "long"). Rows of the phase's band are screened, grouped, and retained;
     the other phase's band rows are skipped except for two bookkeeping
@@ -321,29 +326,56 @@ def screen_and_group(paths: list[Path], phase: str,
     if phase not in BANDS:
         raise ValueError(f"phase must be a band: {sorted(BANDS)}")
     first = phase == "short"
-    cells: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    fails: list[dict[str, Any]] = []
+    cells: dict[tuple[str, str], Path] = {}  # cell key -> spool file
+    if workdir is None:
+        workdir = Path(tempfile.mkdtemp(prefix="sampler_screen_"))
+    else:
+        workdir.mkdir(parents=True, exist_ok=True)
+    fail_path = workdir / f"fails_{phase}.csv"
     n_before = 0
-    for row in stream_norm_rows(paths):
-        if first:
-            n_before += 1
-            hash_counter[row["text_hash"]] += 1
-        band = row["band"]
-        if band != phase and not (phase == "short" and band not in BANDS):
-            continue
-        reason = screen_reason(row)
-        row["screen_reason"] = reason
-        row["screen_pass"] = reason == ""
-        if row["screen_pass"] and row["band"] in BANDS and row["genre"] in GENRES:
-            cells.setdefault((row["band"], row["genre"]), []).append(row)
-        else:
-            fails.append(row)
-    for rows in cells.values():
-        for row in rows:
-            row["duplicate_hash_count"] = hash_counter[row["text_hash"]]
-    for row in fails:
-        row["duplicate_hash_count"] = hash_counter[row["text_hash"]]
-    fails_df = pd.DataFrame(fails) if fails else pd.DataFrame()
+    fail_writer = None
+    fail_header_written = False
+    try:
+        for row in stream_norm_rows(paths):
+            if first:
+                n_before += 1
+                hash_counter[row["text_hash"]] += 1
+            band = row["band"]
+            if band != phase and not (phase == "short" and band not in BANDS):
+                continue
+            reason = screen_reason(row)
+            row["screen_reason"] = reason
+            row["screen_pass"] = reason == ""
+            if row["screen_pass"] and row["band"] in BANDS and row["genre"] in GENRES:
+                key = (row["band"], row["genre"])
+                if key not in cells:
+                    cells[key] = workdir / f"cell_{row['band']}_{row['genre']}.jsonl"
+                    cells[key].touch()
+                with cells[key].open("a", encoding="utf-8") as fp:
+                    fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+            else:
+                row["duplicate_hash_count"] = hash_counter[row["text_hash"]]
+                if fail_writer is None:
+                    fail_writer = fail_path.open("w", encoding="utf-8", newline="")
+                # csv module for safe quoting
+                import csv as _csv
+                w = _csv.DictWriter(fail_writer, fieldnames=list(row.keys()))
+                if not fail_header_written:
+                    w.writeheader(); fail_header_written = True
+                w.writerow(row)
+    finally:
+        if fail_writer is not None:
+            fail_writer.close()
+    # annotate spool files with duplicate_hash_count on a second light pass
+    for key, path in cells.items():
+        tmp = path.with_suffix(".tmp")
+        with path.open("r", encoding="utf-8") as fin, tmp.open("w", encoding="utf-8") as fout:
+            for line in fin:
+                row = json.loads(line)
+                row["duplicate_hash_count"] = hash_counter[row["text_hash"]]
+                fout.write(json.dumps(row, ensure_ascii=False) + "\n")
+        tmp.replace(path)
+    fails_df = pd.read_csv(fail_path) if fail_path.exists() and fail_path.stat().st_size > 0 else pd.DataFrame()
     return cells, fails_df, n_before
 
 
@@ -364,20 +396,31 @@ def draw_corpus_stream(paths: list[Path], cfg: DrawConfig) -> tuple[pd.DataFrame
     reject_rows: list[dict[str, Any]] = []
     fail_frames: list[pd.DataFrame] = []
     n_screened = 0
-    for phase in ("short", "long"):
-        cells, fails_df, n_this = screen_and_group(paths, phase, hash_counter)
-        if phase == "short":
-            n_screened = n_this
-        fail_frames.append(fails_df)
-        for genre in GENRES:
-            frame = pd.DataFrame(cells.get((phase, genre), []))
-            sel, res, rej = draw_cell(frame, phase, genre, cfg, rng,
-                                      global_hashes)
-            selected_rows.extend(frame.loc[sel].to_dict(orient="records"))
-            reserve_rows.extend(frame.loc[res].to_dict(orient="records"))
-            reject_rows.extend(rej)
-            del frame
-            cells.pop((phase, genre), None)
+    workdir = cfg.workdir
+    try:
+        for phase in ("short", "long"):
+            cells, fails_df, n_this = screen_and_group(paths, phase, hash_counter,
+                                                       workdir=workdir)
+            if phase == "short":
+                n_screened = n_this
+            fail_frames.append(fails_df)
+            for genre in GENRES:
+                spool = cells.get((phase, genre))
+                if spool is None:
+                    frame = pd.DataFrame()
+                else:
+                    frame = pd.read_json(spool, lines=True)
+                sel, res, rej = draw_cell(frame, phase, genre, cfg, rng,
+                                          global_hashes)
+                selected_rows.extend(frame.loc[sel].to_dict(orient="records"))
+                reserve_rows.extend(frame.loc[res].to_dict(orient="records"))
+                reject_rows.extend(rej)
+                del frame
+                cells.pop((phase, genre), None)
+    finally:
+        # remove scratch spool files if we asked for a shared workdir
+        if workdir is not None and Path(workdir).name.startswith("sampler_"):
+            shutil.rmtree(workdir, ignore_errors=True)
     selected = pd.DataFrame(selected_rows)
     reserves = pd.DataFrame(reserve_rows)
     selected["set"] = selected["band"].map({"short": "short_text", "long": "long_text"})
@@ -466,6 +509,9 @@ class DrawConfig:
     reserve_per_cell: int = RESERVE_PER_CELL
     source_cap: int = DEFAULT_SOURCE_CAP
     author_cap: int = DEFAULT_AUTHOR_CAP
+    # scratch dir for spooling per-cell passing rows and screen failures to
+    # disk between the streaming passes (None = tempfile default)
+    workdir: Path | None = None
 
 
 def shuffled_indices(df: pd.DataFrame, rng: random.Random) -> list[int]:
@@ -600,11 +646,13 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--reserve", type=int, default=RESERVE_PER_CELL)
     ap.add_argument("--source-cap", type=int, default=DEFAULT_SOURCE_CAP)
     ap.add_argument("--author-cap", type=int, default=DEFAULT_AUTHOR_CAP)
+    ap.add_argument("--workdir", type=Path, default=None,
+                    help="scratch dir for spooling screened rows (default: temp dir)")
     args = ap.parse_args(argv)
 
     cfg = DrawConfig(seed=args.seed, quota_per_cell=args.quota,
                      reserve_per_cell=args.reserve, source_cap=args.source_cap,
-                     author_cap=args.author_cap)
+                     author_cap=args.author_cap, workdir=args.workdir)
     outdir = args.outdir
     if outdir is None:
         base = os.environ.get("DATA_DIR", str(Path.home() / "Dropbox/data_export/echochains"))
