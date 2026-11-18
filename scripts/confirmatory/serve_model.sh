@@ -44,6 +44,8 @@ PARTITION="${PARTITION:-zen3_0512_a100x2}"
 TIME="${TIME:-3-00:00:00}"
 JOB_NAME="${JOB_NAME:-}"
 VLLM_BIN="${VLLM_BIN:-vllm}"
+VLLM_PY="${VLLM_PY:-}"
+VLLM_USE_MODULE="${VLLM_USE_MODULE:-}"
 ENGINE="${ENGINE:-vllm}"
 CHECK=0
 
@@ -61,6 +63,11 @@ Options:
                          otherwise cpu); exported as VLLM_TARGET_DEVICE
                          because vllm serve has no --device flag
   --engine ENGINE        vllm | ollama (default: vllm)
+  --python PY            python interpreter to use with --module (default:
+                         the python next to $VLLM_BIN, or python3)
+  --module               run vLLM via 'python -m vllm.entrypoints.cli.main'
+                         (auto-enabled when the 'vllm' console script cannot
+                         find vllm package metadata, as with vllm-cpu wheels)
   --quant QUANT          e.g. bitsandbytes (default: none)
   --max-model-len N      context cap (default: model config)
   --gpu-mem-util F       vLLM default 0.9; lower on shared cards
@@ -84,6 +91,9 @@ while [[ $# -gt 0 ]]; do
     --dtype)         DTYPE="$2"; shift 2 ;;
     --device)        DEVICE="$2"; shift 2 ;;
     --engine)        ENGINE="$2"; shift 2 ;;
+    --python)        VLLM_PY="$2"; shift 2 ;;
+    --module)        VLLM_USE_MODULE=1; shift ;;
+    --no-module)     VLLM_USE_MODULE=0; shift ;;
     --quant)         QUANT="$2"; shift 2 ;;
     --max-model-len) MAX_MODEL_LEN="$2"; shift 2 ;;
     --gpu-mem-util)  GPU_MEM_UTIL="$2"; shift 2 ;;
@@ -165,11 +175,60 @@ if [[ "$ENGINE" == "ollama" ]]; then
   exit 0
 fi
 
-SERVE=("$VLLM_BIN" serve "$MODEL"
-       --served-model-name "$SERVED_NAME"
-       --host 0.0.0.0 --port "$PORT"
-       --tensor-parallel-size "$TP"
-       --api-key "$API_KEY")
+resolve_vllm_py() {
+  if [[ -z "$VLLM_PY" ]]; then
+    local bin; bin="$(command -v "$VLLM_BIN" 2>/dev/null || true)"
+    if [[ -n "$bin" && -x "$(dirname "$bin")/python" ]]; then
+      VLLM_PY="$(dirname "$bin")/python"
+    else
+      VLLM_PY="python3"
+    fi
+  fi
+}
+
+# vllm-cpu wheels expose metadata as 'vllm-cpu', so the 'vllm' console script
+# crashes at startup; fall back to 'python -m vllm.entrypoints.cli.main'.
+if [[ -z "$VLLM_USE_MODULE" ]]; then
+  resolve_vllm_py
+  if "$VLLM_PY" -c "import importlib.metadata as m; m.version('vllm')"         >/dev/null 2>&1; then
+    VLLM_USE_MODULE=0
+  else
+    VLLM_USE_MODULE=1
+    echo "note: 'vllm' metadata missing; using $VLLM_PY -m vllm.entrypoints.cli.main" >&2
+  fi
+fi
+
+# vllm-cpu wheels ship metadata as 'vllm-cpu', but vllm's CLI calls
+# importlib.metadata.version("vllm") and crashes. Patch metadata.version
+# to fall back to 'vllm-cpu' before invoking the CLI.
+VLLM_CPU_PATCH='import importlib.metadata as m,sys
+_o=m.version
+def _v(n):
+    try: return _o(n)
+    except m.PackageNotFoundError:
+        if n=="vllm":
+            try: return _o("vllm-cpu")
+            except Exception: return "0.0.0"
+        raise
+m.version=_v
+sys.argv=["vllm"]+sys.argv[1:]
+from vllm.entrypoints.cli import main as _main
+_main.main()'
+
+if [[ "$VLLM_USE_MODULE" == "1" ]]; then
+  resolve_vllm_py
+  SERVE=("$VLLM_PY" -c "$VLLM_CPU_PATCH" serve "$MODEL"
+         --served-model-name "$SERVED_NAME"
+         --host 0.0.0.0 --port "$PORT"
+         --tensor-parallel-size "$TP"
+         --api-key "$API_KEY")
+else
+  SERVE=("$VLLM_BIN" serve "$MODEL"
+         --served-model-name "$SERVED_NAME"
+         --host 0.0.0.0 --port "$PORT"
+         --tensor-parallel-size "$TP"
+         --api-key "$API_KEY")
+fi
 [[ -n "$DTYPE" ]]         && SERVE+=(--dtype "$DTYPE")
 [[ -n "$QUANT" ]]         && SERVE+=(--quantization "$QUANT")
 [[ -n "$MAX_MODEL_LEN" ]] && SERVE+=(--max-model-len "$MAX_MODEL_LEN")
@@ -220,10 +279,14 @@ else
     echo "      (pip install vllm-cpu). If this build lacks it, rerun" >&2
     echo "      with --engine ollama." >&2
   fi
-  export -n VLLM_BIN 2>/dev/null || true
-  command -v "$VLLM_BIN" >/dev/null || {
-    echo "error: '$VLLM_BIN' not on PATH (pip install vllm, or set VLLM_BIN)" >&2
-    exit 1
-  }
+  export -n VLLM_BIN VLLM_PY VLLM_USE_MODULE 2>/dev/null || true
+  if [[ "$VLLM_USE_MODULE" == "1" ]]; then
+    command -v "$VLLM_PY" >/dev/null || {
+      echo "error: '$VLLM_PY' not on PATH (set --python)" >&2; exit 1; }
+  else
+    command -v "$VLLM_BIN" >/dev/null || {
+      echo "error: '$VLLM_BIN' not on PATH (pip install vllm, or set VLLM_BIN)" >&2
+      exit 1; }
+  fi
   exec "${SERVE[@]}"
 fi
