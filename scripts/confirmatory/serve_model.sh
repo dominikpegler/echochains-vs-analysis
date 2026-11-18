@@ -27,7 +27,7 @@ set -euo pipefail
 
 MODEL="${MODEL:-}"
 SERVED_NAME="${SERVED_NAME:-}"
-PORT="${PORT:-8558}"
+PORT="${PORT:-8892}"
 TP="${TP:-1}"
 DTYPE="${DTYPE:-}"
 DEVICE="${DEVICE:-}"
@@ -52,7 +52,7 @@ Usage: serve_model.sh --model MODEL [options]
 Options:
   --model MODEL          HF id or local path (required)
   --served-name NAME     name the API exposes (default: MODEL)
-  --port PORT            HTTP port (default 8558)
+  --port PORT            HTTP port (default 8892)
   --tp N                 tensor-parallel size (default 1)
   --dtype DTYPE          float32 | float16 | bfloat16 (default: vLLM auto)
   --device DEVICE        cpu | cuda (default: cuda if a GPU is visible,
