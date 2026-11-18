@@ -68,21 +68,24 @@
 #
 # ## How to run it
 #
-# From a terminal, pass at least one manifest:
+# From a terminal, the real preregistered draw needs only the frozen manifest
+# (all other flags default to the preregistered values: seed 20261031,
+# quota 18 / reserve 12 per cell, source cap 3, author cap 6; output goes to
+# `$DATA_DIR/data/corpus/sampler`):
 #
 # ```bash
-# python scripts/analysis/corpus_sampler_vs.py --manifest /path/to/frozen_candidates.jsonl
+# python scripts/analysis/corpus_sampler_vs.py \
+#     --manifest $DATA_DIR/data/corpus/vs_candidate_manifest.jsonl
 # ```
 #
-# The default output directory is `$DATA_DIR/data/corpus/sampler`; pass
-# `--outdir` to change it.
-#
-# For a small interface test, use lower quotas:
+# Output always goes to `$DATA_DIR/data/corpus/sampler` (the DATA_DIR
+# convention; no --outdir flag). For a small interface test on a subset
+# manifest, override only the quotas (optionally `--workdir` to spool
+# screened rows to disk); the test still writes under DATA_DIR:
 #
 # ```bash
-# python scripts/analysis/corpus_sampler_vs.py --manifest /path/to/test_candidates.jsonl \
-#     --workdir /scratch/sampler_work   # optional: keep screened rows on disk, not in RAM
-#   --outdir /tmp/opencode/corpus_sampler_test --quota 2 --reserve 1
+# python scripts/analysis/corpus_sampler_vs.py \
+#     --manifest /path/to/test_candidates.jsonl --quota 2 --reserve 1
 # ```
 #
 # Inside the notebook, the workflow cells at the end of this file run the
@@ -92,7 +95,6 @@
 # ```python
 # main([
 #     "--manifest", "/path/to/test_candidates.jsonl",
-#     "--outdir", "/tmp/opencode/corpus_sampler_test",
 #     "--quota", "2",
 #     "--reserve", "1",
 # ])
@@ -148,6 +150,9 @@ BANDS = {
 QUOTA_PER_CELL = 18
 RESERVE_PER_CELL = 12
 DEFAULT_SEED = 20261031
+DEFAULT_OUTDIR = (Path(os.environ.get(
+    "DATA_DIR", str(Path.home() / "Dropbox" / "data_export" / "echochains")))
+    / "data" / "corpus" / "sampler")
 
 # Source caps apply within each band and genre. They prevent one article,
 # book, film, or author from dominating a cell. The values are intentionally
@@ -638,9 +643,6 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--manifest", action="append", type=Path, required=True,
                     help="candidate manifest (.jsonl, .json, .csv, .tsv); repeatable")
-    ap.add_argument("--outdir", type=Path,
-                    default=None,
-                    help="output directory (default: $DATA_DIR/data/corpus/sampler)")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     ap.add_argument("--quota", type=int, default=QUOTA_PER_CELL)
     ap.add_argument("--reserve", type=int, default=RESERVE_PER_CELL)
@@ -653,10 +655,7 @@ def main(argv: list[str] | None = None) -> None:
     cfg = DrawConfig(seed=args.seed, quota_per_cell=args.quota,
                      reserve_per_cell=args.reserve, source_cap=args.source_cap,
                      author_cap=args.author_cap, workdir=args.workdir)
-    outdir = args.outdir
-    if outdir is None:
-        base = os.environ.get("DATA_DIR", str(Path.home() / "Dropbox/data_export/echochains"))
-        outdir = Path(base).expanduser() / "data" / "corpus" / "sampler"
+    outdir = DEFAULT_OUTDIR
     selected, reserves, rejects, screen_failures, n_screened = draw_corpus_stream(args.manifest, cfg)
     write_outputs(selected, reserves, rejects, screen_failures, outdir, cfg, n_screened)
     print("selected")
@@ -690,8 +689,7 @@ INSPECT = False  # set True after a draw exists to render the audit tables
 
 # %%
 if DRAW:
-    main(["--manifest", str(FROZEN_MANIFEST),
-          "--outdir", str(DEFAULT_OUTDIR)])
+    main(["--manifest", str(FROZEN_MANIFEST)])
 
 # %% [markdown]
 # ### Post-draw inspection
