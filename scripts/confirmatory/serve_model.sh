@@ -175,7 +175,8 @@ if [[ "$CHECK" != "1" && "$HF_SNAPSHOT" != "never" && "$MODEL" != /* && "$MODEL"
   MODEL_PATH="$($_py - "$MODEL" "$repo_root/.env" <<'PY'
 import os, sys, tempfile
 from pathlib import Path
-repo, env_path = sys.argv[1], Path(sys.argv[2])
+repo = sys.argv[1]
+env_path = Path(os.environ["SERVE_ENV_FILE"])
 tok = None
 for raw in env_path.read_text().splitlines():
     line = raw.strip()
@@ -200,6 +201,9 @@ HfApi(token=tok).model_info(repo)
 print(snapshot_download(repo_id=repo, token=tok, local_files_only=False))
 PY
 )"
+  if [[ -n "$MODEL_PATH" && -d "$MODEL_PATH" ]]; then
+    export HF_HUB_OFFLINE=1
+  fi
 fi
 
 
