@@ -920,7 +920,82 @@ def test_failed_chains_reads_latest_replicate():
         (cell / name).write_text(json.dumps(record), encoding="utf-8")
     replicate, pairs = gen.failed_chains(cell)
     assert replicate == 1
-    assert pairs == [(3, 2), (4, 1)]
+    assert pairs == [("3", 2), ("4", 1)]
+
+
+def test_rerun_failed_with_string_seed_ids():
+    """Drawn seed ids are strings (e.g. VS_S_ENC_001), not integers."""
+    tmp = fresh_tmp()
+    seeds = [seed_dict(seed_id="VS_S_ENC_001")]
+    common = dict(model="fake-model", task="paraphrase",
+                  condition="uniform_list", band="sentence", seeds=seeds,
+                  logs_root=tmp / "logs", cache_root=tmp / "cache", chains=1,
+                  hops=1, replicate=0, partial_flush_every=2, max_retries=3,
+                  limit_seeds=None, limit_chains=None, limit_hops=None)
+    gen.run_cell(FakeBackend(["GARBAGE"] * 3), **common)
+    cell = gen.cell_out_dir(tmp / "logs", "fake-model", "paraphrase",
+                            "uniform_list")
+    assert (cell / "FAILED_MSG_VS_S_ENC_001_chain_001.json").exists()
+    assert gen.failed_chains(cell) == (0, [("VS_S_ENC_001", 1)])
+    gen.run_cell(FakeBackend([list_response("paraphrase")]),
+                 rerun_failed=True, **common)
+    assert (cell / "MSG_VS_S_ENC_001_chain_001_rep1.json").exists()
+
+
+def test_status_precedence_and_missing():
+    """Complete beats a failure, a failure beats a partial, missing counted."""
+    tmp = fresh_tmp()
+    cell = gen.cell_out_dir(tmp / "logs", "fake-model", "paraphrase", "direct")
+    cell.mkdir(parents=True)
+
+    def write_log(name, last_hop):
+        log = [{"hop": 0, "text": "seed", "seed_id": "S"}]
+        log += [{"hop": h, "text": f"t{h}", "attempts": 1}
+                for h in range(1, last_hop + 1)]
+        (cell / name).write_text(json.dumps(log), encoding="utf-8")
+
+    def write_failed(name, replicate, hop=2):
+        (cell / name).write_text(json.dumps({
+            "status": "failed", "seed_id": "S", "chain": 1,
+            "replicate": replicate, "failed_hop": hop,
+            "failed_stage": "paraphrase", "error": "boom",
+            "hops_recorded": hop - 1}), encoding="utf-8")
+
+    write_log("MSG_S_chain_001.json", 3)          # complete
+    write_log("MSG_S_chain_002.json.partial", 2)  # incomplete (resumable)
+    write_log("MSG_S_chain_003.json.partial", 1)  # failed, partial left behind
+    write_failed("FAILED_MSG_S_chain_003.json", 0)
+    write_log("MSG_S_chain_004.json", 1)          # failed at rep 0 ...
+    write_failed("FAILED_MSG_S_chain_004.json", 0)
+    write_log("MSG_S_chain_004_rep1.json", 3)     # ... complete at rep 1
+
+    statuses = gen.chain_statuses(cell, hops=3)
+    assert statuses[("S", 1)]["status"] == "complete"
+    assert statuses[("S", 2)]["status"] == "incomplete"
+    assert statuses[("S", 3)]["status"] == "failed"
+    assert statuses[("S", 3)]["hop"] == 2
+    assert statuses[("S", 4)]["status"] == "complete"
+
+    report = gen.study_status(tmp / "logs", model="fake-model", chains=5,
+                              hops=3, seeds_by_band={"sentence": 1})
+    row = next(c for c in report["models"][0]["cells"]
+               if c["task"] == "paraphrase" and c["condition"] == "direct")
+    assert row["expected"] == 5
+    assert (row["complete"], row["failed"], row["incomplete"],
+            row["missing"]) == (2, 1, 1, 1)
+
+
+def test_status_cli_reports_without_api():
+    tmp = fresh_tmp()
+    cell = gen.cell_out_dir(tmp / "logs", "fake-model", "paraphrase", "direct")
+    cell.mkdir(parents=True)
+    log = [{"hop": 0, "text": "s", "seed_id": "S"}]
+    log += [{"hop": h, "text": "t", "attempts": 1} for h in (1, 2)]
+    (cell / "MSG_S_chain_001.json").write_text(json.dumps(log),
+                                              encoding="utf-8")
+    rc = gen.main(["--status", "--logs-root", str(tmp / "logs"),
+                   "--n-seeds", "1", "--chains", "1", "--hops", "2"])
+    assert rc == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1067,6 +1142,9 @@ TESTS = [
     test_rerun_failed_uses_new_replicate,
     test_rerun_failed_noop_when_clean,
     test_failed_chains_reads_latest_replicate,
+    test_rerun_failed_with_string_seed_ids,
+    test_status_precedence_and_missing,
+    test_status_cli_reports_without_api,
     test_default_decoding_omits_parameters,
     test_qc_inspect_cell,
     test_qc_clean_cell_exits_zero,

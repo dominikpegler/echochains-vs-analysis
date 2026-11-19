@@ -101,6 +101,17 @@ RERUNNING FAILURES (--rerun-failed):
   records are never overwritten. This is the registered quality-control
   rerun path (technical failure only, never substantive-output inspection).
 
+STATUS REPORT (--status, read-only):
+- Scans the logs root (one model, or every model directory found under it)
+  and reports, per task x condition cell, how many chains are complete,
+  failed (a FAILED_MSG_* record and no complete log; rerun with
+  --rerun-failed), incomplete (a partial or truncated log; re-running the
+  cell resumes it), and not started. Expected counts come from the drawn
+  seed file per band, or from --n-seeds. The failed and incomplete chains are
+  listed with their hop, stage, and error. Exit 0 regardless of gaps; a
+  missing logs root exits 2. The notebook's last cell prints the same report
+  for one model through study_status().
+
 LOG SCHEMA (one JSON list per seed x chain; the hop-0 seed entry first):
   hop 0: {"hop": 0, "text": <seed text>, "task", "condition", "seed_id",
           "band", "genre", "model", "backend", "temperature", "top_p"}
@@ -959,7 +970,7 @@ class ChainRunner:
             limit_chains: int | None = None,
             limit_hops: int | None = None,
             workers: int = 1,
-            only_pairs: list[tuple[int, int]] | None = None) -> None:
+            only_pairs: list[tuple[str, int]] | None = None) -> None:
         """Run the cell. `workers > 1` runs chains concurrently.
 
         The work list is always (seed, chain) in seed-major order, so seeds
@@ -976,15 +987,15 @@ class ChainRunner:
         work = [(seed, chain_id) for seed in seeds
                 for chain_id in range(1, chains + 1)]
         if only_pairs is not None:
-            known = {seed["seed_id"]: seed for seed in seeds}
+            known = {str(seed["seed_id"]): seed for seed in seeds}
             missing = [pair for pair in only_pairs if pair[0] not in known]
             if missing:
                 print(f"warning: {len(missing)} failed chain(s) not in the "
                       f"loaded seed set: {missing[:5]}"
                       f"{' ...' if len(missing) > 5 else ''}")
-            work = [(known[seed_id], chain_id)
+            work = [(known[str(seed_id)], chain_id)
                     for seed_id, chain_id in sorted(set(only_pairs))
-                    if seed_id in known]
+                    if str(seed_id) in known]
         self._stop.clear()
         self._progress_count = 0
         self._progress_total = len(work)
@@ -1106,11 +1117,172 @@ def cache_file(cache_root: Path, backend: str, model: str, task: str,
     return (cache_root / f"{backend}-{model}" / f"{task}-{condition}.jsonl")
 
 
-def failed_chains(out_dir: Path) -> tuple[int, list[tuple[int, int]]]:
+STATUS_NAME_RE = re.compile(
+    r"^(?P<failed>FAILED_)?MSG_(?P<seed>.+)_chain_(?P<chain>\d+)"
+    r"(?:_rep(?P<rep>\d+))?\.json(?P<partial>\.partial)?$")
+
+STATUS_LIST_LIMIT = 50
+
+
+def chain_statuses(cell_dir: Path, hops: int) -> dict[tuple[str, int], dict]:
+    """Per (seed, chain) status for one cell, across every replicate present.
+
+    Status is "complete" (a log reaches `hops`), "failed" (a FAILED_MSG_*
+    record and no complete log), or "incomplete" (a partial or truncated log,
+    resumable). Chains with no file are absent from the dict (never started).
+    The highest complete replicate wins; a failure only counts when no
+    replicate completed.
+    """
+    seen: dict[tuple[str, int], dict] = {}
+    for path in cell_dir.glob("*MSG_*_chain_*.json*"):
+        match = STATUS_NAME_RE.match(path.name)
+        if match is None:  # e.g. a .json.tmp left mid-write
+            continue
+        key = (match["seed"], int(match["chain"]))
+        entry = seen.setdefault(key, {"complete": [], "failed": [],
+                                      "partial": [], "truncated": []})
+        replicate = int(match["rep"] or 0)
+        if match["failed"]:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            entry["failed"].append({
+                "replicate": replicate,
+                "hop": record.get("failed_hop"),
+                "stage": record.get("failed_stage"),
+                "error": record.get("error"),
+                "hops_recorded": record.get("hops_recorded"),
+            })
+            continue
+        log = json.loads(path.read_text(encoding="utf-8"))
+        last_hop = max((e.get("hop", 0) for e in log), default=0)
+        bucket = ("partial" if match["partial"]
+                  else "complete" if last_hop >= hops else "truncated")
+        entry[bucket].append({"replicate": replicate, "last_hop": last_hop})
+    statuses: dict[tuple[str, int], dict] = {}
+    for key, entry in seen.items():
+        if entry["complete"]:
+            best = max(entry["complete"], key=lambda item: item["replicate"])
+            statuses[key] = {"status": "complete", **best}
+        elif entry["failed"]:
+            worst = max(entry["failed"], key=lambda item: item["replicate"])
+            statuses[key] = {"status": "failed", **worst}
+        else:
+            pool = entry["partial"] + entry["truncated"]
+            best = max(pool, key=lambda item: item["last_hop"])
+            statuses[key] = {"status": "incomplete", **best}
+    return statuses
+
+
+def study_status(logs_root: Path, *, model: str | None = None,
+                 chains: int = 5, hops: int = 200,
+                 seeds_by_band: dict[str, int | None] | None = None) -> dict:
+    """Collect chain statuses for every task x condition cell.
+
+    `model` limits the scan to one model directory; without it every
+    `confirmatory` directory under `logs_root` is reported. `seeds_by_band`
+    gives the expected number of seeds per band (from the drawn seed file);
+    a missing or None entry falls back to the number of chains found on disk.
+    """
+    if model:
+        models = [model]
+    else:
+        models = sorted(
+            str(path.parent.relative_to(logs_root))
+            for path in logs_root.rglob("confirmatory") if path.is_dir())
+    report = {"logs_root": str(logs_root), "hops": hops, "models": []}
+    for name in models:
+        conf = logs_root / name / "confirmatory"
+        cells = []
+        for task in TASK_ORDER:
+            for condition in CONDITION_ORDER:
+                cell_dir = conf / task / condition
+                statuses = chain_statuses(cell_dir, hops) \
+                    if cell_dir.exists() else {}
+                counts = {"complete": 0, "failed": 0, "incomplete": 0}
+                for status in statuses.values():
+                    counts[status["status"]] += 1
+                expected = None
+                if seeds_by_band is not None:
+                    n_seeds = seeds_by_band.get(TASK_BANDS[task])
+                    if n_seeds is not None:
+                        expected = n_seeds * chains
+                if expected is None:
+                    expected = len(statuses)
+                cells.append({
+                    "task": task,
+                    "condition": condition,
+                    "expected": expected,
+                    "seen": len(statuses),
+                    "missing": max(0, expected - len(statuses)),
+                    **counts,
+                    "failed_chains": sorted(
+                        (key, status) for key, status in statuses.items()
+                        if status["status"] == "failed"),
+                    "incomplete_chains": sorted(
+                        (key, status) for key, status in statuses.items()
+                        if status["status"] == "incomplete"),
+                })
+        report["models"].append({"model": name, "cells": cells})
+    return report
+
+
+def print_study_status(report: dict) -> None:
+    """Print the report from study_status as a compact block."""
+    print(f"logs root: {report['logs_root']}")
+    hops = report.get("hops")
+    for model_block in report["models"]:
+        print(f"\nmodel: {model_block['model']}")
+        cells = model_block["cells"]
+        totals = {"complete": 0, "failed": 0, "incomplete": 0,
+                  "missing": 0, "expected": 0}
+        started, not_started = [], []
+        for cell in cells:
+            for name in ("complete", "failed", "incomplete", "missing",
+                         "expected"):
+                totals[name] += cell[name]
+            (started if cell["seen"] else not_started).append(cell)
+        for cell in started:
+            extra = f"  missing {cell['missing']}" if cell["missing"] else ""
+            print(f"  {cell['task']}/{cell['condition']:<13} "
+                  f"{cell['complete']:>4}/{cell['expected']:<4}  "
+                  f"failed {cell['failed']:<3} "
+                  f"incomplete {cell['incomplete']:<3}{extra}")
+        extra = f"  missing {totals['missing']:,}" if totals["missing"] else ""
+        print(f"  {'total':<26} {totals['complete']:>4}/"
+              f"{totals['expected']:<4}  failed {totals['failed']:<3} "
+              f"incomplete {totals['incomplete']:<3}{extra}")
+        if not_started:
+            pending = sum(cell["missing"] for cell in not_started)
+            names = ", ".join(f"{cell['task']}/{cell['condition']}"
+                              for cell in not_started)
+            print(f"  not started ({len(not_started)} cells, {pending:,} "
+                  f"chains): {names}")
+        failed = [(cell, key, status)
+                  for cell in cells for key, status in cell["failed_chains"]]
+        for cell, (seed, chain), status in failed[:STATUS_LIST_LIMIT]:
+            print(f"  failed: {cell['task']}/{cell['condition']} {seed} "
+                  f"chain {chain}: hop {status['hop']} {status['stage']}: "
+                  f"{status['error']}")
+        if len(failed) > STATUS_LIST_LIMIT:
+            print(f"  failed: ... and {len(failed) - STATUS_LIST_LIMIT} more")
+        incomplete = [(cell, key, status)
+                      for cell in cells
+                      for key, status in cell["incomplete_chains"]]
+        for cell, (seed, chain), status in incomplete[:STATUS_LIST_LIMIT]:
+            print(f"  incomplete: {cell['task']}/{cell['condition']} {seed} "
+                  f"chain {chain}: last hop {status['last_hop']}"
+                  + (f"/{hops}" if hops else ""))
+        if len(incomplete) > STATUS_LIST_LIMIT:
+            print(f"  incomplete: ... and "
+                  f"{len(incomplete) - STATUS_LIST_LIMIT} more")
+
+
+def failed_chains(out_dir: Path) -> tuple[int, list[tuple[str, int]]]:
     """Read the FAILED_MSG_* records of one cell.
 
     Returns (highest failed replicate, [(seed_id, chain), ...] at that
     replicate). `--rerun-failed` reruns exactly those pairs at replicate+1.
+    The seed id is returned as a string (drawn seed ids are strings, e.g.
+    "VS_S_ENC_001"; fixture seeds may be ints).
     """
     records: list[dict] = []
     for path in sorted(out_dir.glob("FAILED_MSG_*.json")):
@@ -1121,7 +1293,7 @@ def failed_chains(out_dir: Path) -> tuple[int, list[tuple[int, int]]]:
     if not records:
         return 0, []
     replicate = max(int(record.get("replicate", 0)) for record in records)
-    pairs = sorted({(int(record["seed_id"]), int(record["chain"]))
+    pairs = sorted({(str(record["seed_id"]), int(record["chain"]))
                     for record in records
                     if int(record.get("replicate", 0)) == replicate})
     return replicate, pairs
@@ -1139,7 +1311,7 @@ def run_cell(backend, *, model: str, task: str, condition: str, band: str,
         raise ValueError(f"seed band {band!r} does not match task {task!r}'s "
                          f"band {expected!r}")
     out_dir = cell_out_dir(logs_root, model, task, condition)
-    only_pairs: list[tuple[int, int]] | None = None
+    only_pairs: list[tuple[str, int]] | None = None
     if rerun_failed:
         failed_rep, only_pairs = failed_chains(out_dir)
         if not only_pairs:
@@ -1164,6 +1336,46 @@ def run_cell(backend, *, model: str, task: str, condition: str, band: str,
           f"({cache.path})")
 
 
+def status_report(args) -> int:
+    """Print the chain-status report for --status (read-only)."""
+    load_dotenv()
+    if args.logs_root:
+        logs_root = Path(os.path.expanduser(args.logs_root))
+    else:
+        logs_root = get_data_dir() / "data" / "echodrift_logs"
+    if not logs_root.exists():
+        print(f"logs root does not exist: {logs_root}")
+        return 2
+    seeds_by_band: dict[str, int | None] | None
+    if args.n_seeds is not None:
+        seeds_by_band = {band: args.n_seeds for band in BANDS}
+    else:
+        try:
+            seeds_path = (Path(args.seeds_file) if args.seeds_file
+                          else default_seeds_file())
+        except ValueError:
+            print("note: DATA_DIR unset and no --seeds-file; expected counts "
+                  "come from the chains found on disk")
+            seeds_path = None
+        seeds_by_band = None
+        if seeds_path is not None:
+            seeds_by_band = {}
+            for band in BANDS:
+                try:
+                    _, band_seeds = load_seed_file(seeds_path, band=band)
+                except (OSError, ValueError, KeyError,
+                        json.JSONDecodeError) as exc:
+                    print(f"note: no seed count for band {band!r} from "
+                          f"{seeds_path} ({exc}); pass --n-seeds")
+                    seeds_by_band[band] = None
+                else:
+                    seeds_by_band[band] = len(band_seeds)
+    report = study_status(logs_root, model=args.model, chains=args.chains,
+                          hops=args.hops, seeds_by_band=seeds_by_band)
+    print_study_status(report)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Confirmatory chain generator (see the module docstring "
@@ -1174,8 +1386,10 @@ def main(argv=None) -> int:
                         help="run all task x condition cells in order")
     parser.add_argument("--backend", choices=("azure", "openai_compatible"),
                         default="azure")
-    parser.add_argument("--model", required=True,
-                        help="model or deployment identifier (pinned in logs)")
+    parser.add_argument("--model",
+                        help="model or deployment identifier (pinned in logs); "
+                             "required for generation, optional with --status "
+                             "(then every model under the logs root is reported)")
     parser.add_argument("--seeds-file", default=None,
                         help="seed JSON in the schema documented in the module docstring "
                              "(default: $DATA_DIR/data/corpus/sampler/vs_confirmatory_seeds_final.jsonl, "
@@ -1209,6 +1423,13 @@ def main(argv=None) -> int:
                         help="rerun the chains recorded in FAILED_MSG_* as a "
                              "new replicate (highest failed replicate + 1); "
                              "the original logs are never overwritten")
+    parser.add_argument("--status", action="store_true",
+                        help="report chain status for the logs root and exit "
+                             "(read-only: complete / failed / incomplete / "
+                             "not started, per task x condition cell)")
+    parser.add_argument("--n-seeds", type=int, default=None,
+                        help="expected seeds per band for --status "
+                             "(default: count the seed file)")
     parser.add_argument("--logs-root",
                         help="override the logs root "
                              "(default DATA_DIR/data/echodrift_logs)")
@@ -1222,6 +1443,10 @@ def main(argv=None) -> int:
     if args.rerun_failed and args.replicate:
         parser.error("--rerun-failed chooses the replicate itself "
                      "(highest failed replicate + 1); drop --replicate")
+    if args.status:
+        return status_report(args)
+    if not args.model:
+        parser.error("--model is required unless --status is given")
 
     if args.all_cells:
         cells = [(t, c) for t in TASK_ORDER for c in CONDITION_ORDER]
