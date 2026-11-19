@@ -10,7 +10,7 @@
 ##SBATCH --account=pXXXXX            # optional, otherwise default project is used
 
 # ---- adjust these ----------------------------------------------------------
-REPO_ROOT="${SLURM_SUBMIT_DIR}"                    # submit from the repo root
+REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"
 RUN_SCRIPT="$REPO_ROOT/scripts/confirmatory/serve_model_and_generate.sh"   # your path
 MODEL="Qwen/Qwen3-32B"                      # check the exact HF id
 SERVED_NAME="Qwen3-32B"
