@@ -535,6 +535,48 @@ def test_parser_tolerates_control_characters_and_python_literals():
         pass
 
 
+def test_unclosed_last_object_is_repaired():
+    """The observed uniform_list break: the last object lacks its closing }."""
+    raw = ('{\n  "paraphrases": [\n'
+           '    {"text": "variant 0"},\n'
+           '    {"text": "variant 1"},\n'
+           '    {"text": "variant 2"},\n'
+           '    {"text": "variant 3"},\n'
+           '    {"text": "variant 4"\n'
+           '  ]\n}')
+    candidates, deviations = gen.parse_joint_response(
+        raw, joint_key("paraphrase"), 5, False)
+    assert len(candidates) == 5
+    assert candidates[-1]["text"] == "variant 4"
+    assert deviations == ["repaired_unclosed_object"]
+
+    case = make_case(responses=[raw], task="paraphrase",
+                     condition="uniform_list", hops=1)
+    case.run()
+    entry = case.log()[1]
+    assert entry["deviations"] == ["repaired_unclosed_object"]
+    assert entry["attempts"] == 1  # repaired, so no retry was spent
+    assert entry["text"] in {f"variant {i}" for i in range(5)}
+    assert not case.failed()
+    # the cache keeps the model's raw text, so a replay repairs again
+    assert len(case.cache.entries) == 1
+
+
+def test_repair_is_narrow():
+    """Only the unclosed final object is repaired; other breaks still fail."""
+    unescaped = '{"paraphrases": [{"text": "The "Daylight Again" album"}]}'
+    try:
+        gen.parse_joint_response(unescaped, joint_key("paraphrase"), 5, False)
+        raise AssertionError("expected ParseError for unescaped quotes")
+    except gen.ParseError:
+        pass
+    good = '{"paraphrases": [{"text": "a"}]}'
+    assert gen.close_missing_last_brace(good) is None
+    # the enclosing object is missing too: one insertion cannot fix it
+    two_open = '{\n "paraphrases": [\n  {"text": "a"},\n  {"text": "b"\n ]\n'
+    assert gen.close_missing_last_brace(two_open) is None
+
+
 def test_duplicates_logged_not_retried():
     case = make_case(responses=[list_response("paraphrase", n=5, dup=(1, 0))],
                      task="paraphrase", condition="uniform_list", hops=1)
@@ -1020,7 +1062,8 @@ def test_qc_inspect_cell():
          "probabilities_normalized": [0.96, 0.01, 0.01, 0.01, 0.01]},
         {"hop": 2, "text": "t2", "attempts": 2,
          "candidates": [{"text": f"v{i}", "probability": 0.2} for i in range(5)],
-         "probabilities_normalized": [0.2] * 5},
+         "probabilities_normalized": [0.2] * 5,
+         "deviations": ["repaired_unclosed_object"]},
     ]
     # chain 002: incomplete (only hop 1), one clean hop
     log2 = [
@@ -1044,6 +1087,7 @@ def test_qc_inspect_cell():
     # retries: 1 of 3 hops
     assert report["technical"]["hops_total"] == 3
     assert report["technical"]["hops_retried"] == 1
+    assert report["technical"]["hops_repaired"] == 1
     assert round(report["technical"]["retry_rate"], 3) == round(1 / 3, 3)
     assert report["technical"]["flag_over_10pct"] is True
     # collapse: seed 1 peaked at hop1 only (1/2 = 0.5, not > 0.5); seed 2
@@ -1124,6 +1168,8 @@ TESTS = [
     test_failure_rate_pauses_cell,
     test_skipped_chain_not_retried_on_resume,
     test_parser_tolerates_control_characters_and_python_literals,
+    test_unclosed_last_object_is_repaired,
+    test_repair_is_narrow,
     test_duplicates_logged_not_retried,
     test_invalid_probability_and_uniform_fallback,
     test_selection_tie_logged,

@@ -33,6 +33,13 @@ EDGE-CASE POLICY (frozen here for the prereg; logged, never silently fixed):
   endpoints are only quasi-deterministic.
 - Malformed JSON, a missing list key, or an unusable candidate list:
   retryable (up to --max-retries, default 3), each attempt counted.
+- Unclosed final list object (the model writes the last candidate, then closes
+  the array without closing the object): one missing `}` immediately before
+  the array's closing bracket is repaired, and the hop logs the deviation
+  "repaired_unclosed_object". The repair is logged, never silent, and is the
+  only structural repair: unescaped quotes, missing commas, missing outer
+  braces and every other break remain malformed. The raw response is cached
+  unchanged, so a replay applies the same repair.
 - Wrong candidate count: retryable; after the retries are exhausted a list
   with k' >= 2 candidates is ACCEPTED with the deviation
   "accepted_wrong_count" logged. With k' < 2 the stage FAILS.
@@ -93,6 +100,10 @@ CONCURRENCY (--workers N, default 1 = serial):
   add latency.
 - A stage failure skips one chain instead of stopping the run; a cell-level
   guard (above) is the only thing that stops the whole run.
+- Output is compact by default: one progress line every 5% of the cell
+  (chains processed, complete, skipped, elapsed, ETA), one line per skipped
+  chain, and the final summary. --verbose adds a line per partial flush and
+  per completed chain, for debugging a slow or stuck chain.
 
 RERUNNING FAILURES (--rerun-failed):
 - Reads the cell's FAILED_MSG_*.json records, takes the highest failed
@@ -410,18 +421,66 @@ def _parse_object(text: str) -> dict | None:
     return obj if isinstance(obj, dict) else None
 
 
-def extract_json_object(raw: str) -> dict:
+def _json_candidates(raw: str) -> list[str]:
+    """The strings tried as the JSON object, widest first."""
     text = raw.strip()
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
+    candidates = [text]
     match = re.search(r"\{.*\}", text, re.DOTALL)
-    for candidate in (text, match.group(0) if match else None):
-        if candidate is None:
-            continue
+    if match and match.group(0) != text:
+        candidates.append(match.group(0))
+    return candidates
+
+
+def extract_json_object(raw: str) -> dict:
+    for candidate in _json_candidates(raw):
         obj = _parse_object(candidate)
         if obj is not None:
             return obj
+    raise ParseError("no parseable JSON object in response")
+
+
+def close_missing_last_brace(text: str) -> str | None:
+    """Close the final list object when the model omitted its closing brace.
+
+    Only the observed shape is repaired: a closed JSON string as the last
+    value, no `}` after the last `{` (the final object is still open), the
+    array closing bracket next, and the enclosing object closed. The repair
+    inserts exactly one `}`; the result must then parse and carry the task's
+    list key before it is accepted, so a wrong guess cannot pass.
+    """
+    end = text.rfind("]")
+    if end == -1:
+        return None
+    head = text[:end]
+    if not head.rstrip().endswith('"'):
+        return None
+    if head.rfind("{") <= head.rfind("}"):
+        return None
+    if not text[end + 1:].strip().startswith("}"):
+        return None
+    return head.rstrip() + "\n  }\n" + text[end:]
+
+
+def extract_json_object_or_repair(raw: str) -> tuple[dict, bool]:
+    """Parse; on failure try the missing-brace repair.
+
+    Returns (object, repaired). Only a repair that yields a dict is accepted,
+    and the caller logs `repaired_unclosed_object`, so no repair is silent.
+    """
+    try:
+        return extract_json_object(raw), False
+    except ParseError:
+        pass
+    for candidate in _json_candidates(raw):
+        repaired = close_missing_last_brace(candidate)
+        if repaired is None:
+            continue
+        obj = _parse_object(repaired)
+        if obj is not None:
+            return obj, True
     raise ParseError("no parseable JSON object in response")
 
 
@@ -435,7 +494,9 @@ def parse_joint_response(raw: str, key: str, k: int,
     when fewer than 2 usable candidates remain.
     """
     deviations: list[str] = []
-    data = extract_json_object(raw)
+    data, repaired = extract_json_object_or_repair(raw)
+    if repaired:
+        deviations.append("repaired_unclosed_object")
     if key not in data or not isinstance(data[key], list):
         raise ParseError(f"JSON missing the '{key}' list")
     items = data[key]
@@ -742,6 +803,18 @@ def run_stage_call(backend, cache: CallCache, cell: CellState, *, model: str,
     return record
 
 
+def _fmt_duration(seconds: float) -> str:
+    """Compact duration for progress lines: 45s, 18m, 2h36m."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
+
+
 class ChainRunner:
     """One task x condition cell: iterates seeds and chains, writes logs."""
 
@@ -751,7 +824,8 @@ class ChainRunner:
                  partial_flush_every: int = 25,
                  max_retries: int = 3,
                  vs_k: int = vs_task_prompts.VS_K,
-                 decoding: dict | None = None):
+                 decoding: dict | None = None,
+                 verbose: bool = False):
         self.backend = backend
         self.model = model
         self.task = task
@@ -775,6 +849,8 @@ class ChainRunner:
         self._progress_count = 0
         self._progress_total = 0
         self._progress_every = 1
+        self._started = 0.0
+        self.verbose = verbose
 
     # -- helpers ------------------------------------------------------------
     def _chain_path(self, seed_id: int, chain_id: int) -> Path:
@@ -867,6 +943,7 @@ class ChainRunner:
                 "top_p": self.decoding.get("top_p"),
             }]
         context = {"hop": 0, "stage": ""}
+        started = time.monotonic()
         try:
             for hop_id in range(1, self.hops + 1):
                 existing = next((e for e in log if e.get("hop") == hop_id), None)
@@ -876,8 +953,9 @@ class ChainRunner:
                 self._run_hop(log, seed_id, chain_id, hop_id, context)
                 if hop_id % self.partial_flush_every == 0 and hop_id < self.hops:
                     self._write(log, path, final=False)
-                    print(f"  seed {seed_id} chain {chain_id}: hop {hop_id}/{self.hops}",
-                          flush=True)
+                    if self.verbose:
+                        print(f"  seed {seed_id} chain {chain_id}: "
+                              f"hop {hop_id}/{self.hops}", flush=True)
         except CellPaused as exc:
             # cell-level guard (retry share or failed-chain rate): stop the cell
             self._pause(seed_id, chain_id, context["hop"],
@@ -897,6 +975,10 @@ class ChainRunner:
         if partial.exists():
             partial.unlink()
         self.cell.register_completion()
+        if self.verbose:
+            print(f"  completed {seed_id} chain {chain_id} "
+                  f"({self.hops} hops, {_fmt_duration(time.monotonic() - started)})",
+                  flush=True)
         return "complete"
 
     def _run_hop(self, log: list[dict], seed_id: int, chain_id: int,
@@ -956,9 +1038,17 @@ class ChainRunner:
         with self._progress_lock:
             self._progress_count += 1
             done = self._progress_count
-        if done % self._progress_every == 0 or done == self._progress_total:
-            print(f"[{self.task}/{self.condition}] chain {done}/"
-                  f"{self._progress_total} done", flush=True)
+        if done % self._progress_every != 0 and done != self._progress_total:
+            return
+        elapsed = time.monotonic() - self._started
+        remaining = self._progress_total - done
+        eta = elapsed / done * remaining if done else 0.0
+        print(f"[{self.task}/{self.condition}] {done}/{self._progress_total} "
+              f"chains ({100 * done / max(1, self._progress_total):.0f}%) | "
+              f"{self.cell.chains_completed} complete, "
+              f"{self.cell.chains_failed} skipped | "
+              f"{_fmt_duration(elapsed)} elapsed, "
+              f"~{_fmt_duration(eta)} left", flush=True)
 
     def _worker_task(self, seed: dict, chain_id: int) -> None:
         if self._stop.is_set():
@@ -1000,6 +1090,7 @@ class ChainRunner:
         self._progress_count = 0
         self._progress_total = len(work)
         self._progress_every = max(1, self._progress_total // 20)
+        self._started = time.monotonic()
 
         if workers <= 1:
             for seed, chain_id in work:
@@ -1305,7 +1396,7 @@ def run_cell(backend, *, model: str, task: str, condition: str, band: str,
              max_retries: int, limit_seeds: int | None,
              limit_chains: int | None, limit_hops: int | None,
              decoding: dict | None = None, workers: int = 1,
-             rerun_failed: bool = False) -> None:
+             rerun_failed: bool = False, verbose: bool = False) -> None:
     expected = TASK_BANDS[task]
     if band != expected:
         raise ValueError(f"seed band {band!r} does not match task {task!r}'s "
@@ -1327,7 +1418,7 @@ def run_cell(backend, *, model: str, task: str, condition: str, band: str,
         seeds=seeds, band=band, out_dir=out_dir,
         cache=cache, chains=chains, hops=hops, replicate=replicate,
         partial_flush_every=partial_flush_every, max_retries=max_retries,
-        decoding=decoding,
+        decoding=decoding, verbose=verbose,
     )
     print(f"=== {task} / {condition} ===")
     runner.run(limit_seeds=limit_seeds, limit_chains=limit_chains,
@@ -1423,6 +1514,10 @@ def main(argv=None) -> int:
                         help="rerun the chains recorded in FAILED_MSG_* as a "
                              "new replicate (highest failed replicate + 1); "
                              "the original logs are never overwritten")
+    parser.add_argument("--verbose", action="store_true",
+                        help="print a line per hop flush and per completed "
+                             "chain (default: one progress line every 5%% of "
+                             "the cell)")
     parser.add_argument("--status", action="store_true",
                         help="report chain status for the logs root and exit "
                              "(read-only: complete / failed / incomplete / "
@@ -1498,7 +1593,7 @@ def main(argv=None) -> int:
                      limit_chains=args.limit_chains,
                      limit_hops=args.limit_hops,
                      decoding=decoding, workers=args.workers,
-                     rerun_failed=args.rerun_failed)
+                     rerun_failed=args.rerun_failed, verbose=args.verbose)
     except CellPaused as exc:
         # pause-and-inspect: the marker file documents the failing position;
         # rerunning the same command resumes from cache and chain logs.

@@ -47,6 +47,9 @@ CONDITION_ORDER = ("direct", "uniform_list", "vs_weighted")
 # Cell inspection
 # ---------------------------------------------------------------------------
 
+REPAIR_DEVIATION = "repaired_unclosed_object"
+
+
 def load_chain(path: Path) -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -59,6 +62,7 @@ def inspect_cell(cell_dir: Path, task: str, condition: str, *, hops: int,
                 "chains_expected": n_seeds * chains_expected}
     incomplete = []
     retry_hops = 0
+    repaired_hops = 0
     total_hops = 0
     per_seed_peaked: dict[int, list[int]] = {}
     nli_hops: list[dict] = []
@@ -85,6 +89,9 @@ def inspect_cell(cell_dir: Path, task: str, condition: str, *, hops: int,
             incomplete.append({"file": path.name, "last_hop": last_hop})
         total_hops += len(hop_entries)
         retry_hops += sum(1 for e in hop_entries if e.get("attempts", 1) > 1)
+        repaired_hops += sum(
+            1 for e in hop_entries
+            if REPAIR_DEVIATION in (e.get("deviations") or []))
         seed_id = chain[0].get("seed_id", 0) if chain else 0
         if condition == "vs_weighted":
             counts = (per_seed_peaked.setdefault(seed_id, [0, 0]))
@@ -109,6 +116,7 @@ def inspect_cell(cell_dir: Path, task: str, condition: str, *, hops: int,
                                   for p in cell_dir.glob("FAILED_MSG_*.json")),
         "technical": {"hops_total": total_hops, "hops_retried": retry_hops,
                       "retry_rate": technical_rate,
+                      "hops_repaired": repaired_hops,
                       "flag_over_10pct": technical_rate > 0.10},
     }
     if condition == "vs_weighted":
@@ -166,6 +174,9 @@ def summarize(report: dict) -> str:
     lines.append(f"retry rate: {tech['hops_retried']}/{tech['hops_total']} "
                  f"= {tech['retry_rate']:.1%}"
                  + (" FLAG (>10%)" if tech["flag_over_10pct"] else ""))
+    if tech.get("hops_repaired"):
+        lines.append(f"repaired hops: {tech['hops_repaired']} "
+                     f"(missing closing brace, logged)")
     if "collapse" in report:
         n_flag = len(report["collapse"]["flagged_seeds"])
         lines.append(f"collapse: {n_flag} seed(s) flagged "
