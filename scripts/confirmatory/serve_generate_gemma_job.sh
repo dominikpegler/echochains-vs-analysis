@@ -40,8 +40,8 @@ exec "$RUN_SCRIPT" \
   --port "$PORT" \
   --tp 2 \
   --dtype bfloat16 \
-  --max-model-len 32768 \
-  --gpu-mem-util 0.92 \
+  --max-model-len 16384 \
+  --gpu-mem-util 0.97 \
   --temperature 1.0 \
   --top-p 0.95 \
   --nworkers 32

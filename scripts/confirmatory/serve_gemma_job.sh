@@ -37,5 +37,5 @@ nvidia-smi -L
   --port "$PORT" \
   --tp 2 \
   --dtype bfloat16 \
-  --max-model-len 16384 \
+  --max-model-len 32768 \
   --gpu-mem-util 0.92
