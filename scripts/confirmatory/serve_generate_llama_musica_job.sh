@@ -18,7 +18,7 @@ PORT=8892
 # ----------------------------------------------------------------------------
 
 module purge
-module load miniconda3/24.1.2
+module load Miniforge3/25.3.0-3
 eval "$(conda shell.bash hook)"
 conda activate $DATA/envs/vllm_env
 
