@@ -2,12 +2,11 @@
 #SBATCH --job-name=serve-generate-llama3-8b-musica
 #SBATCH --partition=zen4_0768_h100x4
 #SBATCH --qos=zen4_0768_h100x4
-#SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1                 # one H100 is ample for the 8B at BF16 (~19 GB)
 #SBATCH --time=3-00:00:00            # QOS max; use e.g. 00:30:00 for a first test
 #SBATCH --output=%x-%j.log
-##SBATCH --account=pXXXXX            # optional, otherwise default project is used
+#SBATCH --account=p201444            # MUSICA project account
 
 # ---- adjust these ----------------------------------------------------------
 REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"

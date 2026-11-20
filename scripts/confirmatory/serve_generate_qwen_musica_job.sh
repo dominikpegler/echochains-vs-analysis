@@ -2,12 +2,11 @@
 #SBATCH --job-name=serve-generate-qwen3-32b-musica
 #SBATCH --partition=zen4_0768_h100x4
 #SBATCH --qos=zen4_0768_h100x4
-#SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1                 # one H100 (~94 GB) fits the 32B at BF16 (TP=1)
 #SBATCH --time=3-00:00:00            # QOS max; use e.g. 00:30:00 for a first test
 #SBATCH --output=%x-%j.log
-##SBATCH --account=pXXXXX            # optional, otherwise default project is used
+#SBATCH --account=p201444            # MUSICA project account
 
 # ---- adjust these ----------------------------------------------------------
 REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"
