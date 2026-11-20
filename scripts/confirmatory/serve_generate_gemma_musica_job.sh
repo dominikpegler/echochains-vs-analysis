@@ -6,7 +6,8 @@
 #SBATCH --gres=gpu:1                 # one H100 (~94 GB) fits the 31B at BF16 (TP=1)
 #SBATCH --time=3-00:00:00            # QOS max; use e.g. 00:30:00 for a first test
 #SBATCH --output=%x-%j.log
-#SBATCH --account=p201444            # MUSICA project account
+# MUSICA needs an explicit account (project specific). Submit with
+# ./submit_musica.sh or sbatch --account=<name>; no account is hardcoded here.
 
 # ---- adjust these ----------------------------------------------------------
 REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"
