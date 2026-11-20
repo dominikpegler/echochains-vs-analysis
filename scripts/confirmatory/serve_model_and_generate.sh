@@ -23,6 +23,11 @@
 # full pinned HF ids, so a short --served-name is rejected there. The shipped
 # job scripts pass the card values (Qwen3-32B 0.7/0.8, Gemma 4 1.0/0.95).
 #
+# DATA_DIR: an exported value wins; otherwise it is read from the repo's .env
+# (an empty entry counts as unset). The path must be absolute and, when no
+# --seeds-file is given, must contain data/corpus/sampler/
+# vs_confirmatory_seeds_final.jsonl.
+#
 # Resume semantics are the generator's, unchanged: re-running the same command
 # skips complete chains, replays accepted calls from the response cache, and
 # skips chains recorded in FAILED_MSG_*. Default is a plain resume
@@ -148,9 +153,44 @@ if [[ -n "$TEMPERATURE" || -n "$TOP_P" ]]; then
   [[ -n "$TEMPERATURE" && -n "$TOP_P" ]] || {
     echo "error: --temperature and --top-p must be given together" >&2; exit 1; }
 fi
-if [[ -z "$SEEDS_FILE" && -z "${DATA_DIR:-}" ]]; then
-  echo "error: DATA_DIR is unset and no --seeds-file given" >&2
-  exit 1
+# DATA_DIR: the exported value wins; otherwise take it from the repo .env.
+# The generator would load .env itself, but this script needs the path before
+# the server starts, and an empty .env entry must not count as set.
+if [[ -z "${DATA_DIR:-}" && -f "$repo_root/.env" ]]; then
+  DATA_DIR="$("$PYTHON" - "$repo_root/.env" <<'PY'
+import sys
+from pathlib import Path
+for raw in Path(sys.argv[1]).read_text().splitlines():
+    line = raw.strip()
+    if line.startswith("export "):
+        line = line[len("export "):].strip()
+    if line.startswith("DATA_DIR="):
+        value = line.split("=", 1)[1].strip().strip('"').strip("'")
+        print(value)
+        break
+PY
+)" || true
+  if [[ -n "$DATA_DIR" ]]; then
+    export DATA_DIR
+    echo "DATA_DIR from .env: $DATA_DIR"
+  fi
+fi
+if [[ -z "$SEEDS_FILE" ]]; then
+  if [[ -z "${DATA_DIR:-}" ]]; then
+    echo "error: DATA_DIR is unset (export it or set it in" \
+         "$repo_root/.env) and no --seeds-file given" >&2
+    exit 1
+  fi
+  if [[ "$DATA_DIR" != /* ]]; then
+    echo "error: DATA_DIR must be an absolute path, got '$DATA_DIR'" >&2
+    exit 1
+  fi
+  default_seeds="$DATA_DIR/data/corpus/sampler/vs_confirmatory_seeds_final.jsonl"
+  if [[ ! -f "$default_seeds" ]]; then
+    echo "error: default seed file not found: $default_seeds" >&2
+    echo "       pass --seeds-file, or fix DATA_DIR in the environment/.env" >&2
+    exit 1
+  fi
 fi
 
 TASKS=(paraphrase improve take_inspiration expand+compress)
