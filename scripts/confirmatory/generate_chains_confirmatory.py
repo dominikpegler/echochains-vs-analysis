@@ -57,17 +57,13 @@ EDGE-CASE POLICY (frozen here for the prereg; logged, never silently fixed):
   recorded so far) and the run continues with the next chain. That record is
   also the resume guard: a plain resume never re-runs a skipped chain. There
   is NO fallback to another condition.
-- CELL-LEVEL FAILURE GUARD (replaces the former "first stage failure pauses
-  the cell" rule, 2026-11-18): the cell pauses with a marker
-  ".paused_<seed>_<chain>_<hop>_<stage>" only when failures look systematic:
-  three consecutive skipped chains, or skipped chains above 10% of the
-  chains finished in the run (counted from 20 chains on). A paused cell stops
-  handing out new chains; chains already running finish and keep their logs.
-  Both thresholds are class constants in CellState (FAILURE_PAUSE_*).
-- Separately, the Methods' pause-and-inspect rule: once >= 20 calls in a
-  cell needed a retry (parse or API) and their share exceeds 10% of
-  completed calls, the cell also PAUSES (retry-rate marker) before failure
-  rates can compound further.
+- CELL-LEVEL POLICY (2026-11-21: the earlier pause guards were removed): a
+  failed chain never stops the cell. Every (seed, chain) in the work list is
+  attempted; a failure is recorded and skipped, and the run continues. There
+  are no consecutive-failure or failure-share thresholds, and the retry-share
+  pause was removed too, because a cell must always attempt the rest of its
+  chains. Failed chains stay recoverable through the quality-control rerun
+  (--rerun-failed: new replicate, fresh seeds).
 
 RESUME / CACHE:
 - A response-level cache (append-only JSONL) keyed on the SHA-256 of backend
@@ -98,8 +94,8 @@ CONCURRENCY (--workers N, default 1 = serial):
   single consumer GPU, 64 on an A100 node. Beyond roughly 64 in-flight
   requests a local 8B model is memory-bandwidth bound and more requests only
   add latency.
-- A stage failure skips one chain instead of stopping the run; a cell-level
-  guard (above) is the only thing that stops the whole run.
+- A stage failure skips one chain; the cell always attempts its full work
+  list, so nothing stops the run short of a crash or Ctrl-C.
 - Output is compact by default: one progress line every 5% of the cell
   (chains processed, complete, skipped, elapsed, ETA), one line per skipped
   chain, and the final summary. --verbose adds a line per partial flush and
@@ -563,16 +559,12 @@ def select_index(candidates: list[dict], condition: str, rng: random.Random,
 # Cell accounting and stage execution
 # ---------------------------------------------------------------------------
 
-class CellPaused(Exception):
-    """A cell-level guard tripped; the whole run must stop."""
-
-
 class ChainStageFailure(Exception):
     """Terminal for one chain: no usable response within the retry budget.
 
     The chain is recorded (see ChainRunner._record_failure) and skipped; the
-    run continues with the next chain. A cell-wide guard may still pause the
-    run afterwards (CellState.register_failure).
+    run continues with the next chain. Nothing pauses the cell any more
+    (2026-11-21 policy).
     """
 
     def __init__(self, hop_id: int, stage_name: str, attempts: int,
@@ -589,40 +581,18 @@ class ChainStageFailure(Exception):
 
 
 class CellState:
-    """Per-cell accounting for the pause-and-inspect rules.
+    """Per-cell accounting for progress reporting (no pausing).
 
-    Two independent guards, both evaluated on completed work:
+    2026-11-21 policy: a failed chain only skips that chain. The cell never
+    pauses, and every (seed, chain) in the work list is attempted. The
+    counters below exist for the progress line and the summary; they cover
+    chains finished in this process, so a resumed run starts from zero.
 
-    - retry share: `retry_needed` counts completed calls that needed at least
-      one retry (parse or API); once >= 20 calls completed and the share
-      exceeds RETRY_PAUSE_RATE, the cell pauses.
-    - chain failures: a chain that exhausts its retry budget is skipped (not
-      fatal to the run). The cell pauses after FAILURE_PAUSE_CONSECUTIVE
-      consecutive skipped chains, or when skipped chains exceed
-      FAILURE_PAUSE_RATE of the chains finished in this run (counted from
-      FAILURE_PAUSE_MIN_CHAINS on). The counters cover chains finished in
-      this process; a resumed run starts from zero.
-
-    With `workers > 1` the counters are shared, so "consecutive" means the
-    last N chains to finish and the share is over finished chains.
+    With `workers > 1` the counters are shared under a lock.
     """
 
-    RETRY_PAUSE_RATE = 0.10
-    RETRY_PAUSE_MIN_CALLS = 20
-    FAILURE_PAUSE_CONSECUTIVE = 3
-    FAILURE_PAUSE_RATE = 0.10
-    FAILURE_PAUSE_MIN_CHAINS = 20
-
-    def __init__(self, max_retries: int,
-                 max_consecutive_failures: int | None = None,
-                 max_failure_rate: float | None = None):
+    def __init__(self, max_retries: int):
         self.max_retries = max_retries
-        self.max_consecutive = (self.FAILURE_PAUSE_CONSECUTIVE
-                                if max_consecutive_failures is None
-                                else max_consecutive_failures)
-        self.max_failure_rate = (self.FAILURE_PAUSE_RATE
-                                 if max_failure_rate is None
-                                 else max_failure_rate)
         self.successes = 0
         self.retry_needed = 0
         self.chains_completed = 0
@@ -635,13 +605,6 @@ class CellState:
             self.successes += 1
             if attempts > 1:
                 self.retry_needed += 1
-            total = self.successes
-            retry_needed = self.retry_needed
-        if (total >= self.RETRY_PAUSE_MIN_CALLS
-                and retry_needed / total > self.RETRY_PAUSE_RATE):
-            raise CellPaused(
-                f"retry rate {retry_needed}/{total} exceeds "
-                f"{self.RETRY_PAUSE_RATE:.0%}; pause and inspect the cell")
 
     def register_completion(self) -> None:
         with self.lock:
@@ -649,23 +612,10 @@ class CellState:
             self.consecutive_failures = 0
 
     def register_failure(self, failure: ChainStageFailure) -> None:
-        """Count a skipped chain and apply the cell-level failure guards."""
+        """Count a skipped chain (the cell never pauses on failures)."""
         with self.lock:
             self.chains_failed += 1
             self.consecutive_failures += 1
-            consecutive = self.consecutive_failures
-            failed = self.chains_failed
-            finished = self.chains_completed + self.chains_failed
-        if consecutive >= self.max_consecutive:
-            raise CellPaused(
-                f"{consecutive} consecutive failed chains "
-                f"(last: hop {failure.hop} {failure.stage}: {failure.error}); "
-                f"pause and inspect the cell")
-        if (finished >= self.FAILURE_PAUSE_MIN_CHAINS
-                and failed / finished > self.max_failure_rate):
-            raise CellPaused(
-                f"failed-chain share {failed}/{finished} exceeds "
-                f"{self.max_failure_rate:.0%}; pause and inspect the cell")
 
 
 def stage_messages(task: str, condition: str, stage_name: str,
@@ -690,8 +640,7 @@ def run_stage_call(backend, cache: CallCache, cell: CellState, *, model: str,
 
     Returns the stage's log record (see the module docstring). Raises
     ChainStageFailure when the retry budget is exhausted (the chain is
-    terminal, the caller records and skips it), and CellPaused when the
-    cell-level retry-share guard trips.
+    terminal, the caller records and skips it). Nothing pauses the cell.
     """
     decoding = DECODING["locked"] if decoding is None else dict(decoding)
     if not text_in or not text_in.strip():
@@ -871,14 +820,6 @@ class ChainRunner:
             name += f"_rep{self.replicate}"
         return self.out_dir / f"{name}.json"
 
-    def _pause(self, seed_id: int, chain_id: int, hop_id: int,
-               stage_name: str, reason: str) -> None:
-        marker = (self.out_dir /
-                  f".paused_{seed_id}_{chain_id}_{hop_id}_{stage_name}")
-        marker.write_text(reason + "\n", encoding="utf-8")
-        print(f"CELL PAUSED: {reason}; marker {marker.name}")
-        raise CellPaused(reason)
-
     def _write(self, log: list[dict], path: Path, final: bool) -> None:
         target = path if final else path.with_suffix(".json.partial")
         tmp = target.with_name(target.name + ".tmp")
@@ -956,19 +897,10 @@ class ChainRunner:
                     if self.verbose:
                         print(f"  seed {seed_id} chain {chain_id}: "
                               f"hop {hop_id}/{self.hops}", flush=True)
-        except CellPaused as exc:
-            # cell-level guard (retry share or failed-chain rate): stop the cell
-            self._pause(seed_id, chain_id, context["hop"],
-                        context["stage"] or "hop", str(exc))
         except ChainStageFailure as failure:
-            # terminal for this chain only: record it, then let the cell
-            # guard decide whether the run continues
+            # terminal for this chain only: record it and continue the cell
             self._record_failure(log, seed_id, chain_id, failure)
-            try:
-                self.cell.register_failure(failure)
-            except CellPaused as exc:
-                self._pause(seed_id, chain_id, failure.hop, failure.stage,
-                            str(exc))
+            self.cell.register_failure(failure)
             return "failed"
         self._write(log, path, final=True)
         partial = path.with_suffix(".json.partial")
@@ -1066,8 +998,8 @@ class ChainRunner:
         The work list is always (seed, chain) in seed-major order, so seeds
         finish in order and the set of calls is identical to a serial run:
         every API and selection seed derives from the design keys, not from
-        execution order. On a pause, no new chain starts; chains already
-        running finish and keep their logs.
+        execution order. A failed chain is skipped; the whole work list is
+        always attempted.
         """
         if limit_hops is not None:
             self.hops = min(self.hops, limit_hops)
@@ -1581,25 +1513,20 @@ def main(argv=None) -> int:
              else ""))
 
     backend = build_backend(args.backend)
-    try:
-        for task, condition in cells:
-            run_cell(backend, model=args.model, task=task, condition=condition,
-                     band=band, seeds=seeds, logs_root=logs_root,
-                     cache_root=cache_root, chains=args.chains, hops=args.hops,
-                     replicate=args.replicate,
-                     partial_flush_every=args.partial_flush_every,
-                     max_retries=args.max_retries,
-                     limit_seeds=args.limit_seeds,
-                     limit_chains=args.limit_chains,
-                     limit_hops=args.limit_hops,
-                     decoding=decoding, workers=args.workers,
-                     rerun_failed=args.rerun_failed, verbose=args.verbose)
-    except CellPaused as exc:
-        # pause-and-inspect: the marker file documents the failing position;
-        # rerunning the same command resumes from cache and chain logs.
-        print(f"STOPPED (paused cell): {exc}")
-        return 3
+    for task, condition in cells:
+        run_cell(backend, model=args.model, task=task, condition=condition,
+                 band=band, seeds=seeds, logs_root=logs_root,
+                 cache_root=cache_root, chains=args.chains, hops=args.hops,
+                 replicate=args.replicate,
+                 partial_flush_every=args.partial_flush_every,
+                 max_retries=args.max_retries,
+                 limit_seeds=args.limit_seeds,
+                 limit_chains=args.limit_chains,
+                 limit_hops=args.limit_hops,
+                 decoding=decoding, workers=args.workers,
+                 rerun_failed=args.rerun_failed, verbose=args.verbose)
     return 0
+
 
 
 if __name__ == "__main__":

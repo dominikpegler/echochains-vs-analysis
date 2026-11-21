@@ -469,27 +469,23 @@ def test_stage_failure_skips_chain_and_continues():
     assert not case.markers()
 
 
-def test_consecutive_failures_pause_cell():
-    """Three consecutive skipped chains trip the cell guard."""
+def test_consecutive_failures_do_not_pause_cell():
+    """Failed chains never stop the cell: every seed is still attempted."""
     seeds = [seed_dict(seed_id=i) for i in (1, 2, 3, 4)]
     case = make_case(responses=["GARBAGE"] * 4, task="paraphrase",
                      condition="uniform_list", seeds=seeds, chains=1, hops=1,
                      max_retries=1)
-    try:
-        case.run()
-        raise AssertionError("expected CellPaused from the failure guard")
-    except gen.CellPaused:
-        pass
-    assert case.markers()
-    assert len(case.failed()) == 3
-    assert len(case.backend.calls) == 3  # the fourth chain never starts
+    case.run()
+    assert not case.markers(), "failed chains must not pause the cell"
+    assert len(case.failed()) == 4
+    assert len(case.backend.calls) == 4  # the fourth chain runs too
 
 
-def test_failure_rate_pauses_cell():
-    """A spread-out failure share above 10% pauses once 20 chains finished."""
+def test_failure_share_does_not_pause_cell():
+    """A failure share above 10% is fine: the whole work list still runs."""
     n_seeds = 40
     seeds = [seed_dict(seed_id=i) for i in range(1, n_seeds + 1)]
-    # every third chain fails once: 13-14 of 40, well above 10%
+    # every third chain fails once: 13-14 of 40, well above the old 10%
     queue: list = []
     for seed_id in range(1, n_seeds + 1):
         if seed_id % 3 == 0:
@@ -499,15 +495,11 @@ def test_failure_rate_pauses_cell():
     case = make_case(responses=queue, task="paraphrase",
                      condition="uniform_list", seeds=seeds, chains=1, hops=1,
                      max_retries=1)
-    try:
-        case.run()
-        raise AssertionError("expected CellPaused from the failure-rate guard")
-    except gen.CellPaused:
-        pass
-    assert case.markers()
+    case.run()
+    assert not case.markers(), "failure share must not pause the cell"
     finished = case.cell.chains_completed + case.cell.chains_failed
-    assert finished >= gen.CellState.FAILURE_PAUSE_MIN_CHAINS
-    assert case.cell.chains_failed / finished > gen.CellState.FAILURE_PAUSE_RATE
+    assert finished == n_seeds, "every chain in the work list is attempted"
+    assert case.cell.chains_failed == n_seeds // 3
 
 
 def test_skipped_chain_not_retried_on_resume():
@@ -624,8 +616,8 @@ def test_api_error_retry_then_success():
     assert entry["attempts"] == 2
 
 
-def test_retry_rate_threshold_pauses():
-    """20+ calls in a cell with a >10% retry share pause the cell."""
+def test_retry_rate_does_not_pause_cell():
+    """Retries are counted for reporting but never pause the cell."""
     seeds = [seed_dict(seed_id=i) for i in (1, 2)]
     dirty_call_numbers = {3, 9, 15, 20}
     # walk the call order the runner will use: seed x chain x hop
@@ -640,13 +632,10 @@ def test_retry_rate_threshold_pauses():
                     queue.insert(len(queue) - 1, "GARBAGE")
     case = make_case(responses=queue, task="paraphrase",
                      condition="uniform_list", seeds=seeds, chains=5, hops=3)
-    try:
-        case.run()
-        raise AssertionError("expected CellPaused from the retry-rate rule")
-    except gen.CellPaused:
-        pass
-    assert case.markers()
+    case.run()
+    assert not case.markers(), "retry share must not pause the cell"
     assert case.cell.retry_needed >= 4
+    assert case.cell.chains_completed == len(seeds) * 5
 
 
 # ---------------------------------------------------------------------------
@@ -1164,8 +1153,8 @@ TESTS = [
     test_wrong_count_retry_hits_exact_count_first,
     test_fewer_than_two_candidates_skips_chain,
     test_stage_failure_skips_chain_and_continues,
-    test_consecutive_failures_pause_cell,
-    test_failure_rate_pauses_cell,
+    test_consecutive_failures_do_not_pause_cell,
+    test_failure_share_does_not_pause_cell,
     test_skipped_chain_not_retried_on_resume,
     test_parser_tolerates_control_characters_and_python_literals,
     test_unclosed_last_object_is_repaired,
@@ -1174,7 +1163,7 @@ TESTS = [
     test_invalid_probability_and_uniform_fallback,
     test_selection_tie_logged,
     test_api_error_retry_then_success,
-    test_retry_rate_threshold_pauses,
+    test_retry_rate_does_not_pause_cell,
     test_cache_resume_without_new_calls,
     test_completed_chain_skipped,
     test_parse_failure_not_cached,
