@@ -34,6 +34,8 @@ nvidia-smi -L
 # Serve Llama-3.1-8B on one GPU (TP=1), then run all 12 task x condition
 # cells against it. Decoding is passed explicitly because the short served
 # name is not in the generator's VENDOR_DECODE table (Meta card: 0.6/0.9).
+# --rerun-failed-pass: after the first pass, finish paused cells and retry
+# the chains recorded as failed, all against the same running server.
 exec "$RUN_SCRIPT" \
   --model "$MODEL" \
   --served-name "$SERVED_NAME" \
@@ -44,4 +46,5 @@ exec "$RUN_SCRIPT" \
   --gpu-mem-util 0.97 \
   --temperature 0.6 \
   --top-p 0.9 \
+  --rerun-failed-pass \
   --nworkers 32

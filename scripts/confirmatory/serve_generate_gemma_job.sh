@@ -34,6 +34,8 @@ nvidia-smi -L
 # Serve gemma-4-31B-it, then run all 12 task x condition cells against it.
 # Decoding is passed explicitly because the short served name is not in the
 # generator's VENDOR_DECODE table (Gemma 4 card: temperature 1.0, top_p 0.95).
+# --rerun-failed-pass: after the first pass, finish paused cells and retry
+# the chains recorded as failed, all against the same running server.
 exec "$RUN_SCRIPT" \
   --model "$MODEL" \
   --served-name "$SERVED_NAME" \
@@ -44,4 +46,5 @@ exec "$RUN_SCRIPT" \
   --gpu-mem-util 0.97 \
   --temperature 1.0 \
   --top-p 0.95 \
+  --rerun-failed-pass \
   --nworkers 32

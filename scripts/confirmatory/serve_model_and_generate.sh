@@ -34,9 +34,23 @@
 # (--replicate 0); --rerun-failed reruns the recorded failed pairs as a new
 # replicate instead.
 #
-# Exit codes: 0 every cell finished without a pause; 3 at least one cell
-# paused (resumable: re-run the same command); 1 a cell or the server failed
-# hard. --stop-on-pause stops the loop at the first pause/error instead of
+# --rerun-failed-pass adds two tail passes after the first pass, while the
+# server is still up, so a batch job normally does not need a second
+# submission just to clean up failures:
+#   1. "resume": every cell again at --replicate 0, which finishes any cell
+#      that paused in the first pass (a partial log, no FAILED_MSG_* record).
+#   2. "rerun-failed": every cell again with --rerun-failed, which retries the
+#      chains recorded in FAILED_MSG_* as a new replicate (highest failed
+#      replicate + 1). Cells with no failure records are a no-op.
+# Both tail passes run unconditionally; on an already clean run they only log
+# skips and "nothing to rerun". The final summary and exit code reflect the
+# last state of each cell, so a cell that paused first and finished in the
+# resume pass counts as done.
+#
+# Exit codes: 0 every cell finished (a pause that a tail pass resolved still
+# counts as finished); 3 at least one cell is still paused after all passes
+# (resumable: re-run the same command); 1 a cell or the server failed hard.
+# --stop-on-pause stops the loop at the first pause/error instead of
 # continuing with the remaining cells.
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -58,6 +72,7 @@ EXTRA_ARGS=""
 API_KEY="${API_KEY:-local}"
 NWORKERS=32
 RERUN_FAILED=0
+RERUN_FAILED_PASS=0
 STOP_ON_PAUSE=0
 CHAINS=5
 HOPS=200
@@ -93,6 +108,10 @@ Generation flags (passed to generate_chains_confirmatory.py):
                            node supports this, a consumer GPU 16)
   --rerun-failed           rerun FAILED_MSG_* pairs at a new replicate
                            (default: plain resume at --replicate 0)
+  --rerun-failed-pass      after the first pass, run a plain-resume pass
+                           (finish paused cells) and then a --rerun-failed
+                           pass (retry FAILED_MSG_* chains), both against the
+                           same running server
   --chains N               chains per seed (default 5)
   --hops N                 hops per chain (default 200)
   --max-retries N          attempts per hop stage (default 3)
@@ -128,6 +147,7 @@ while [[ $# -gt 0 ]]; do
     --api-key)       API_KEY="$2"; shift 2 ;;
     --nworkers)      NWORKERS="$2"; shift 2 ;;
     --rerun-failed)  RERUN_FAILED=1; shift ;;
+    --rerun-failed-pass) RERUN_FAILED_PASS=1; shift ;;
     --stop-on-pause) STOP_ON_PAUSE=1; shift ;;
     --chains)        CHAINS="$2"; shift 2 ;;
     --hops)          HOPS="$2"; shift 2 ;;
@@ -257,48 +277,86 @@ wait_for_server
 export OPENAI_BASE_URL="$endpoint"
 export OPENAI_API_KEY="$API_KEY"
 
+# Per-cell state, overwritten by each pass so the summary shows the last
+# result: ok, paused, or "err:<rc>". Cells a --stop-on-pause run never
+# reached are simply absent.
+declare -A CELL_STATUS=()
+STOPPED=0
+
+# run_pass RERUN_FAILED LABEL
+#   Runs all 12 task x condition cells once. RERUN_FAILED=1 passes
+#   --rerun-failed to the generator; 0 passes --replicate 0 (plain resume).
+#   A cell is recorded as ok when the generator exits 0, paused on exit 3,
+#   and errored on any other code. With --stop-on-pause the pass returns
+#   early and STOPPED is set so later passes are skipped.
+run_pass() {
+  local rerun_failed="$1" label="$2"
+  local task condition cell rc
+  local -a gen_args
+  echo "=== pass: $label ($(date '+%Y-%m-%d %H:%M:%S')) ==="
+  for task in "${TASKS[@]}"; do
+    for condition in "${CONDITIONS[@]}"; do
+      cell="$task/$condition"
+      gen_args=(--backend openai_compatible --model "$SERVED_NAME"
+                --task "$task" --condition "$condition"
+                --chains "$CHAINS" --hops "$HOPS"
+                --max-retries "$MAX_RETRIES"
+                --partial-flush-every "$PARTIAL_FLUSH_EVERY"
+                --workers "$NWORKERS")
+      [[ -n "$SEEDS_FILE" ]] && gen_args+=(--seeds-file "$SEEDS_FILE")
+      [[ -n "$LOGS_ROOT" ]]  && gen_args+=(--logs-root "$LOGS_ROOT")
+      [[ -n "$CACHE_ROOT" ]] && gen_args+=(--cache-root "$CACHE_ROOT")
+      if [[ -n "$TEMPERATURE" ]]; then
+        gen_args+=(--temperature "$TEMPERATURE" --top-p "$TOP_P")
+      fi
+      if (( rerun_failed )); then
+        gen_args+=(--rerun-failed)
+      else
+        gen_args+=(--replicate 0)
+      fi
+      echo "=== [$label] $cell $(date '+%Y-%m-%d %H:%M:%S') ==="
+      rc=0
+      "$PYTHON" "$GENERATOR" "${gen_args[@]}" || rc=$?
+      if (( rc == 0 )); then
+        CELL_STATUS["$cell"]=ok
+      elif (( rc == 3 )); then
+        echo "cell paused: $cell (re-run to resume from the cache)" >&2
+        CELL_STATUS["$cell"]=paused
+      else
+        echo "error: generator exited $rc for $cell" >&2
+        CELL_STATUS["$cell"]="err:$rc"
+      fi
+      if (( STOP_ON_PAUSE )) && [[ "${CELL_STATUS[$cell]}" != ok ]]; then
+        echo "--stop-on-pause: stopping the cell loop" >&2
+        STOPPED=1
+        return 0
+      fi
+    done
+  done
+}
+
+run_pass "$RERUN_FAILED" "primary"
+if (( RERUN_FAILED_PASS && ! STOPPED )); then
+  # Same server, same allocation: finish paused cells, then retry the
+  # technical failures as a new replicate.
+  run_pass 0 "resume"
+  run_pass 1 "rerun-failed"
+fi
+
+echo "=== summary ==="
+echo "cells run:   $(( ${#TASKS[@]} * ${#CONDITIONS[@]} ))"
 declare -a paused=()
 declare -a errored=()
 for task in "${TASKS[@]}"; do
   for condition in "${CONDITIONS[@]}"; do
-    gen_args=(--backend openai_compatible --model "$SERVED_NAME"
-              --task "$task" --condition "$condition"
-              --chains "$CHAINS" --hops "$HOPS"
-              --max-retries "$MAX_RETRIES"
-              --partial-flush-every "$PARTIAL_FLUSH_EVERY"
-              --workers "$NWORKERS")
-    [[ -n "$SEEDS_FILE" ]] && gen_args+=(--seeds-file "$SEEDS_FILE")
-    [[ -n "$LOGS_ROOT" ]]  && gen_args+=(--logs-root "$LOGS_ROOT")
-    [[ -n "$CACHE_ROOT" ]] && gen_args+=(--cache-root "$CACHE_ROOT")
-    if [[ -n "$TEMPERATURE" ]]; then
-      gen_args+=(--temperature "$TEMPERATURE" --top-p "$TOP_P")
-    fi
-    if (( RERUN_FAILED )); then
-      gen_args+=(--rerun-failed)
-    else
-      gen_args+=(--replicate 0)
-    fi
-    echo "=== [$task / $condition] $(date '+%Y-%m-%d %H:%M:%S') ==="
-    rc=0
-    "$PYTHON" "$GENERATOR" "${gen_args[@]}" || rc=$?
-    if (( rc == 0 )); then
-      continue
-    elif (( rc == 3 )); then
-      echo "cell paused: $task / $condition (re-run to resume from the cache)" >&2
-      paused+=("$task/$condition")
-    else
-      echo "error: generator exited $rc for $task / $condition" >&2
-      errored+=("$task/$condition (exit $rc)")
-    fi
-    if (( STOP_ON_PAUSE )); then
-      echo "--stop-on-pause: stopping the cell loop" >&2
-      break 2
-    fi
+    cell="$task/$condition"
+    case "${CELL_STATUS[$cell]:-}" in
+      ok)     ;;
+      paused) paused+=("$cell") ;;
+      err:*)  errored+=("$cell (exit ${CELL_STATUS[$cell]#err:})") ;;
+    esac
   done
 done
-
-echo "=== summary ==="
-echo "cells run:   $(( ${#TASKS[@]} * ${#CONDITIONS[@]} ))"
 if (( ${#paused[@]} )); then
   echo "paused:      ${paused[*]}"
 fi
