@@ -25,7 +25,7 @@
 #
 # DATA_DIR: an exported value wins; otherwise it is read from the repo's .env
 # (an empty entry counts as unset). The path must be absolute and, when no
-# --seeds-file is given, must contain data/corpus/sampler/
+# --seeds-file is given, must contain data/confirmatory/corpus/sampler/
 # vs_confirmatory_seeds_final.jsonl.
 #
 # Resume semantics are the generator's, unchanged: re-running the same command
@@ -118,10 +118,10 @@ Generation flags (passed to generate_chains_confirmatory.py):
   --partial-flush-every N  partial-log interval (default 25)
   --temperature F          decoding temperature (give with --top-p)
   --top-p F                decoding top-p (give with --temperature)
-  --seeds-file PATH        default: $DATA_DIR/data/corpus/sampler/
+  --seeds-file PATH        default: $DATA_DIR/data/confirmatory/corpus/sampler/
                            vs_confirmatory_seeds_final.jsonl
-  --logs-root PATH         default: $DATA_DIR/data/vs_data/logs
-  --cache-root PATH        default: $DATA_DIR/data/echodrift_confirmatory_cache
+  --logs-root PATH         default: $DATA_DIR/data/confirmatory/logs
+  --cache-root PATH        default: $DATA_DIR/data/confirmatory/cache
   --python PY              interpreter for the generator and probes
                            (default: python3; the serving env's python)
   --stop-on-pause          stop the cell loop on the first pause/error
@@ -205,7 +205,7 @@ if [[ -z "$SEEDS_FILE" ]]; then
     echo "error: DATA_DIR must be an absolute path, got '$DATA_DIR'" >&2
     exit 1
   fi
-  default_seeds="$DATA_DIR/data/corpus/sampler/vs_confirmatory_seeds_final.jsonl"
+  default_seeds="$DATA_DIR/data/confirmatory/corpus/sampler/vs_confirmatory_seeds_final.jsonl"
   if [[ ! -f "$default_seeds" ]]; then
     echo "error: default seed file not found: $default_seeds" >&2
     echo "       pass --seeds-file, or fix DATA_DIR in the environment/.env" >&2

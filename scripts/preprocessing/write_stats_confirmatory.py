@@ -2,7 +2,7 @@
 """Incremental preprocessing: confirmatory chain logs -> metric/axis exports.
 
 Walker semantics: there are no model/task/condition filters. The script scans
-every cell under ``$DATA_DIR/data/vs_data/logs/<model>/confirmatory/<task>/<condition>/``
+every cell under ``$DATA_DIR/data/confirmatory/logs/<model>/confirmatory/<task>/<condition>/``
 (``<model>`` may contain a slash, e.g. an HF id ``org/name``)
 and processes each complete chain log that has not been processed yet.
 
@@ -10,7 +10,7 @@ Per chain (``MSG_<seed>_chain_<n>[_rep<k>].json``) the script computes the
 pilot's cumulative metrics plus projections onto the five semantic axes and
 writes one parquet shard under
 
-    $DATA_DIR/data/vs_data/stats/<model>/<config>/<task>/<condition>/shards/
+    $DATA_DIR/data/confirmatory/stats/<model>/<config>/<task>/<condition>/shards/
 
 The config folder is derived from the decoding recorded in the log
 (``model_default`` when temperature/top-p are absent, else
@@ -104,8 +104,8 @@ def get_paths():
 
     data_dir = Path(get_data_dir())
     return (
-        data_dir / "data" / "vs_data" / "logs",
-        data_dir / "data" / "vs_data" / "stats",
+        data_dir / "data" / "confirmatory" / "logs",
+        data_dir / "data" / "confirmatory" / "stats",
     )
 
 
@@ -457,8 +457,7 @@ def default_seeds_file() -> Path:
 
     return (
         Path(get_data_dir())
-        / "data"
-        / "corpus"
+        / "data" / "confirmatory" / "corpus"
         / "sampler"
         / "vs_confirmatory_seeds_final.jsonl"
     )

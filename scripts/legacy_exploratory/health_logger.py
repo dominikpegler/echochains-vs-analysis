@@ -3,7 +3,7 @@ import subprocess
 import time
 from pathlib import Path
 
-ROOT = Path("/home/user/Dropbox/data_export/echochains/data/exploratory_stats")
+ROOT = Path("/home/user/Dropbox/data_export/echochains/data/exploratory/stats")
 LOG = Path("/home/user/health_log.csv")
 
 

@@ -241,7 +241,7 @@ def main(argv=None) -> int:
                         help="omit the DeBERTa NLI pass (torch unavailable)")
     parser.add_argument("--output-dir",
                         help="override the QC report directory "
-                             "(default DATA_DIR/data/echodrift_confirmatory_qc)")
+                             "(default DATA_DIR/data/confirmatory/qc)")
     args = parser.parse_args(argv)
 
     if args.all_cells:
@@ -265,10 +265,10 @@ def main(argv=None) -> int:
         data_root = Path(os.path.expanduser(data_dir))
         logs_root = (Path(os.path.expanduser(args.logs_root))
                      if args.logs_root
-                     else data_root / "data" / "vs_data" / "logs")
+                     else data_root / "data" / "confirmatory" / "logs")
         out_dir = (Path(os.path.expanduser(args.output_dir))
                    if args.output_dir
-                   else data_root / "data" / "echodrift_confirmatory_qc"
+                   else data_root / "data" / "confirmatory/qc"
                    / args.model)
 
     any_flag = False

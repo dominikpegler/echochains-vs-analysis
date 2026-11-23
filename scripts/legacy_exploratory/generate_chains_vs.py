@@ -60,7 +60,7 @@ AZURE_ENDPOINT = os.environ["AZURE_ENDPOINT"]
 API_VERSION = os.environ["API_VERSION"]
 
 DATA_DIR = get_data_dir()
-LOGS_DIR = Path(DATA_DIR, "data", "exploratory_logs")
+LOGS_DIR = Path(DATA_DIR, "data", "exploratory/logs")
 
 def _find_repo_root():
     try:
@@ -68,12 +68,12 @@ def _find_repo_root():
     except NameError:
         pass
     for _cand in [Path.cwd().resolve(), *Path.cwd().resolve().parents]:
-        if (_cand / "exploratory_seeds").is_dir() and (_cand / "scripts").is_dir():
+        if (_cand / "exploratory/seeds").is_dir() and (_cand / "scripts").is_dir():
             return _cand
     return Path.cwd().resolve()
 
 
-with open(_find_repo_root() / "exploratory_seeds" / "seed_sentences_50.json", "r") as fp:
+with open(_find_repo_root() / "exploratory/seeds" / "seed_sentences_50.json", "r") as fp:
     SEED_SENTENCES = json.load(fp)
 
 SYSTEM_PROMPT_DIRECT = (

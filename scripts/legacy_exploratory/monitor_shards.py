@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-ROOT = Path(os.path.expanduser("~/Dropbox/data_export/echochains/data/exploratory_stats"))
+ROOT = Path(os.path.expanduser("~/Dropbox/data_export/echochains/data/exploratory/stats"))
 
 
 def main():

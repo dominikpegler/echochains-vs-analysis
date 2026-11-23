@@ -4,7 +4,7 @@ Everything belonging to the exploratory pilot study lives here:
 
 - `generate_chains_vs.py` / `generate_chains_vs.ipynb` — pilot chain generator
   (VS argmax/weighted, 50-seed corpus).
-- `exploratory_seeds/` — the pilot seed sentences.
+- `exploratory/seeds/` — the pilot seed sentences.
 - `run_shard_*`, `launch_shards.py`, `monitor_shards.py`, `watchdog_shards.py`,
   `health_logger.py`, `run_vs_embeddings.py`, `process_vs_embeddings_worker.py`
   — pilot shard and embeddings machinery, tied to the old

@@ -30,9 +30,9 @@ HOP = 200
 
 DATA_DIR = get_data_dir()
 if ARM == "direct":
-    STATS_DIR = Path(DATA_DIR, "data", "exploratory_stats")
+    STATS_DIR = Path(DATA_DIR, "data", "exploratory/stats")
 else:
-    STATS_DIR = Path(DATA_DIR, "data", "exploratory_stats", ARM)
+    STATS_DIR = Path(DATA_DIR, "data", "exploratory/stats", ARM)
 
 AXIS_CSV = STATS_DIR / "axis_cumulative_long.csv"
 METRICS_CSV = STATS_DIR / "metrics_cumulative_long.csv"

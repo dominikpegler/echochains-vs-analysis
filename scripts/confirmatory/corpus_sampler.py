@@ -15,7 +15,7 @@
 # source metadata, license information, offsets, and any automatic labels.
 # This sampler does not fetch Wikipedia revisions, fiction texts, or transcripts.
 # The frozen manifest for the confirmatory study exists at
-# `$DATA_DIR/data/corpus/vs_candidate_manifest.jsonl` (built 2026-11-07;
+# `$DATA_DIR/data/confirmatory/corpus/vs_candidate_manifest.jsonl` (built 2026-11-07;
 # 3,104,430 candidates; the article sample and its titles are recorded in
 # the audit), so the draw can run as soon as the human label validation
 # passes.
@@ -42,16 +42,16 @@
 # ## How to run it
 #
 # From a terminal, the real preregistered draw is a zero-argument call:
-# the frozen manifest `$DATA_DIR/data/corpus/vs_candidate_manifest.jsonl`,
+# the frozen manifest `$DATA_DIR/data/confirmatory/corpus/vs_candidate_manifest.jsonl`,
 # the draw seed 20261031, quota 18 / reserve 12 per cell, the source/author
-# caps, and the output directory `$DATA_DIR/data/corpus/sampler` are all
+# caps, and the output directory `$DATA_DIR/data/confirmatory/corpus/sampler` are all
 # defaults:
 #
 # ```bash
 # python scripts/confirmatory/corpus_sampler.py
 # ```
 #
-# Output always goes to `$DATA_DIR/data/corpus/sampler` (the DATA_DIR
+# Output always goes to `$DATA_DIR/data/confirmatory/corpus/sampler` (the DATA_DIR
 # convention; no --outdir flag). For a small interface test on a subset
 # manifest, override only the quotas (optionally `--workdir` to spool
 # screened rows to disk); the test still writes under DATA_DIR:
@@ -138,8 +138,8 @@ RESERVE_PER_CELL = 12
 DEFAULT_SEED = 20261031
 _DATA_DIR = Path(os.environ.get(
     "DATA_DIR", str(Path.home() / "Dropbox" / "data_export" / "echochains")))
-DEFAULT_OUTDIR = _DATA_DIR / "data" / "corpus" / "sampler"
-DEFAULT_MANIFEST = _DATA_DIR / "data" / "corpus" / "vs_candidate_manifest.jsonl"
+DEFAULT_OUTDIR = _DATA_DIR / "data" / "confirmatory" / "corpus" / "sampler"
+DEFAULT_MANIFEST = _DATA_DIR / "data" / "confirmatory" / "corpus" / "vs_candidate_manifest.jsonl"
 
 # Source caps apply within each band and genre. They prevent one article,
 # book, film, or author from dominating a cell. The values are intentionally
@@ -639,7 +639,7 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--manifest", action="append", type=Path, default=None,
                     help="candidate manifest (.jsonl, .json, .csv, .tsv); "
-                         "repeatable. Default: $DATA_DIR/data/corpus/"
+                         "repeatable. Default: $DATA_DIR/data/confirmatory/corpus/"
                          "vs_candidate_manifest.jsonl (the frozen manifest)")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     ap.add_argument("--quota", type=int, default=QUOTA_PER_CELL)
@@ -676,15 +676,15 @@ if __name__ == "__main__" and "__file__" in globals():
 # the file safe when the .py twin runs as a script and the notebook executes
 # out of order: nothing is drawn or written until a gate is flipped
 # deliberately. The frozen manifest and the default output paths point at
-# `$DATA_DIR/data/corpus/`.
+# `$DATA_DIR/data/confirmatory/corpus/`.
 
 # %%
 import os
 
 DATA_DIR = Path(os.environ.get(
     "DATA_DIR", str(Path.home() / "Dropbox" / "data_export" / "echochains")))
-FROZEN_MANIFEST = DATA_DIR / "data" / "corpus" / "vs_candidate_manifest.jsonl"
-DEFAULT_OUTDIR = DATA_DIR / "data" / "corpus" / "sampler"
+FROZEN_MANIFEST = DATA_DIR / "data" / "confirmatory" / "corpus" / "vs_candidate_manifest.jsonl"
+DEFAULT_OUTDIR = DATA_DIR / "data" / "confirmatory" / "corpus" / "sampler"
 DRAW = False  # set True to run the one confirmatory draw
 INSPECT = False  # set True after a draw exists to render the audit tables
 

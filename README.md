@@ -69,15 +69,15 @@ them as plain `.py` files.
   `make_paper_outputs.py`, `make_slide_figures.py`.
 - `scripts/legacy_exploratory/` — everything from the exploratory study:
   the pilot chain generator (`generate_chains_vs.py` + notebook), the pilot
-  seeds (`exploratory_seeds/`), the shard/embeddings machinery, and the
+  seeds (`exploratory/seeds/`), the shard/embeddings machinery, and the
   old `legacy/` tree (`analysis_01_vs`).
 
 Study assets under `DATA_DIR` are kept apart by a `confirmatory` path component.
 Exploratory (pilot) assets keep their existing paths (`pub/descriptives*`,
-`data/exploratory_stats/{,vs_weighted,vs_argmax}`) and are frozen; confirmatory
-chain logs live under `data/vs_data/logs/<model>/confirmatory/<task>/<condition>/`
+`data/exploratory/stats/{,vs_weighted,vs_argmax}`) and are frozen; confirmatory
+chain logs live under `data/confirmatory/logs/<model>/confirmatory/<task>/<condition>/`
 (`<model>` may be an HF id with an org prefix), and confirmatory analysis exports
-under `data/vs_data/stats/<model>/<config>/<task>/<condition>/`
+under `data/confirmatory/stats/<model>/<config>/<task>/<condition>/`
 and `pub/confirmatory/<analysis>/`.
 
 The exploratory descriptive analysis (tables, figures, `metrics_pub.json`) is

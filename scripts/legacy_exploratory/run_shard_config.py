@@ -12,9 +12,9 @@ METRICS_VERSION = "v1.0.0"
 MODEL = "gpt-4.1-nano"
 
 DATA_DIR = get_data_dir()
-LOGS_DIR = Path(DATA_DIR, "data", "exploratory_logs")
-EMB_DIR = Path(DATA_DIR, "data", "exploratory_emb", ANALYSIS_NAME)
-STATS_DIR = Path(DATA_DIR, "data", "exploratory_stats", SUB_PATH)
+LOGS_DIR = Path(DATA_DIR, "data", "exploratory/logs")
+EMB_DIR = Path(DATA_DIR, "data", "exploratory/emb", ANALYSIS_NAME)
+STATS_DIR = Path(DATA_DIR, "data", "exploratory/stats", SUB_PATH)
 SHARD_ROOT = STATS_DIR / "shards"
 OUT_DIR = SHARD_ROOT / MODEL / SUB_PATH / CONFIG
 

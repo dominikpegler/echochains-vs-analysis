@@ -80,9 +80,9 @@ SUB_PATH = "vs_weighted"
 
 # Paths/config
 DATA_DIR = get_data_dir()
-LOGS_DIR = Path(DATA_DIR, "data", "exploratory_logs")
-STATS_DIR = Path(DATA_DIR, "data", "exploratory_stats")
-STATS_DIR = Path(DATA_DIR, "data", "exploratory_stats", SUB_PATH)
+LOGS_DIR = Path(DATA_DIR, "data", "exploratory/logs")
+STATS_DIR = Path(DATA_DIR, "data", "exploratory/stats")
+STATS_DIR = Path(DATA_DIR, "data", "exploratory/stats", SUB_PATH)
 
 
 os.makedirs(STATS_DIR, exist_ok=True)
@@ -100,12 +100,12 @@ def _find_repo_root():
     except NameError:
         pass
     for _cand in [Path.cwd().resolve(), *Path.cwd().resolve().parents]:
-        if (_cand / "exploratory_seeds").is_dir() and (_cand / "scripts").is_dir():
+        if (_cand / "exploratory/seeds").is_dir() and (_cand / "scripts").is_dir():
             return _cand
     return Path.cwd().resolve()
 
 
-MSG_FILE = _find_repo_root() / "exploratory_seeds" / "seed_sentences_50.json"
+MSG_FILE = _find_repo_root() / "exploratory/seeds" / "seed_sentences_50.json"
 
 # Which configs/models to include in paper figures/tables now (pilot)
 # Set to None to include all available configs/models

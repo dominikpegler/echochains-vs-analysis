@@ -133,7 +133,7 @@ LOG SCHEMA (one JSON list per seed x chain; the hop-0 seed entry first):
            "attempts", "deviations", "from_cache"}; the top-level fields
           carry the LAST stage (compress), whose text is the transmitted one.
 
-SEED FILE SCHEMA (--seeds-file, default $DATA_DIR/data/corpus/sampler/vs_confirmatory_seeds_final.jsonl; validated on load):
+SEED FILE SCHEMA (--seeds-file, default $DATA_DIR/data/confirmatory/corpus/sampler/vs_confirmatory_seeds_final.jsonl; validated on load):
   {"band": "sentence" | "long", "seeds": [{"seed_id": 1, "text": "...",
     "genre": "encyclopedic" | "fiction" | "dialogue"}, ...]}
   The confirmatory seed sets themselves are built under plan step 5; the
@@ -141,10 +141,10 @@ SEED FILE SCHEMA (--seeds-file, default $DATA_DIR/data/corpus/sampler/vs_confirm
   match the task (expand+compress: long; the other three tasks: sentence).
 
 OUTPUT LAYOUT (under DATA_DIR/data by default, overridable):
-  vs_data/logs/<model>/confirmatory/<task>/<condition>/MSG_<seed>_chain_<chain>.json
-  vs_data/logs/<model>/confirmatory/<task>/<condition>/FAILED_MSG_<seed>_chain_<chain>.json
+  confirmatory/logs/<model>/confirmatory/<task>/<condition>/MSG_<seed>_chain_<chain>.json
+  confirmatory/logs/<model>/confirmatory/<task>/<condition>/FAILED_MSG_<seed>_chain_<chain>.json
       (skipped-chain record: failure detail, failed raw responses, hop log)
-  echodrift_confirmatory_cache/<backend>-<model>/<task>-<condition>.jsonl
+  confirmatory/cache/<backend>-<model>/<task>-<condition>.jsonl
 
 Backends: "azure" (Luna; env API_KEY / AZURE_ENDPOINT / API_VERSION as in
 the pilot) and "openai_compatible" (panel models on the Vienna cluster; env
@@ -1112,7 +1112,7 @@ def load_seed_file(path: Path, band: str | None = None) -> tuple[str, list[dict]
 
 
 def default_seeds_file() -> Path:
-    return get_data_dir() / "data" / "corpus" / "sampler" / "vs_confirmatory_seeds_final.jsonl"
+    return get_data_dir() / "data" / "confirmatory" / "corpus" / "sampler" / "vs_confirmatory_seeds_final.jsonl"
 
 
 def get_data_dir() -> Path:
@@ -1365,7 +1365,7 @@ def status_report(args) -> int:
     if args.logs_root:
         logs_root = Path(os.path.expanduser(args.logs_root))
     else:
-        logs_root = get_data_dir() / "data" / "vs_data" / "logs"
+        logs_root = get_data_dir() / "data" / "confirmatory" / "logs"
     if not logs_root.exists():
         print(f"logs root does not exist: {logs_root}")
         return 2
@@ -1415,7 +1415,7 @@ def main(argv=None) -> int:
                              "(then every model under the logs root is reported)")
     parser.add_argument("--seeds-file", default=None,
                         help="seed JSON in the schema documented in the module docstring "
-                             "(default: $DATA_DIR/data/corpus/sampler/vs_confirmatory_seeds_final.jsonl, "
+                             "(default: $DATA_DIR/data/confirmatory/corpus/sampler/vs_confirmatory_seeds_final.jsonl, "
                              "the sampler's draw output)")
     parser.add_argument("--chains", type=int, default=5)
     parser.add_argument("--hops", type=int, default=200)
@@ -1459,10 +1459,10 @@ def main(argv=None) -> int:
                              "(default: count the seed file)")
     parser.add_argument("--logs-root",
                         help="override the logs root "
-                             "(default DATA_DIR/data/vs_data/logs)")
+                             "(default DATA_DIR/data/confirmatory/logs)")
     parser.add_argument("--cache-root",
                         help="override the cache root "
-                             "(default DATA_DIR/data/echodrift_confirmatory_cache)")
+                             "(default DATA_DIR/data/confirmatory/cache)")
     args = parser.parse_args(argv)
 
     if args.workers < 1:
@@ -1497,10 +1497,10 @@ def main(argv=None) -> int:
     else:
         logs_root = (Path(os.path.expanduser(args.logs_root))
                      if args.logs_root
-                     else get_data_dir() / "data" / "vs_data" / "logs")
+                     else get_data_dir() / "data" / "confirmatory" / "logs")
         cache_root = (Path(os.path.expanduser(args.cache_root))
                       if args.cache_root
-                      else get_data_dir() / "data" / "echodrift_confirmatory_cache")
+                      else get_data_dir() / "data" / "confirmatory/cache")
 
     try:
         decoding = resolve_decoding(args.model, args.decoding,
