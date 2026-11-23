@@ -36,7 +36,7 @@ under iterated LM paraphrasing, using a two-component decomposition
     ```
 
     `DATA_DIR` points at the shared data root (default
-    `~/Dropbox/data_export/echo-chains`); published outputs go to
+    `~/Dropbox/data_export/echochains`); published outputs go to
     `DATA_DIR_PUB/pub`.
 
 ## Package layout
@@ -74,10 +74,10 @@ them as plain `.py` files.
 
 Study assets under `DATA_DIR` are kept apart by a `confirmatory` path component.
 Exploratory (pilot) assets keep their existing paths (`pub/descriptives*`,
-`data/echodrift_stats/{,vs_weighted,vs_argmax}`) and are frozen; confirmatory
+`data/exploratory_stats/{,vs_weighted,vs_argmax}`) and are frozen; confirmatory
 chain logs live under `data/vs_data/logs/<model>/confirmatory/<task>/<condition>/`
 (`<model>` may be an HF id with an org prefix), and confirmatory analysis exports
-under `data/echodrift_stats/confirmatory/<model>/<config>/<task>/<condition>/`
+under `data/vs_data/stats/<model>/<config>/<task>/<condition>/`
 and `pub/confirmatory/<analysis>/`.
 
 The exploratory descriptive analysis (tables, figures, `metrics_pub.json`) is

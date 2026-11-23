@@ -10,7 +10,7 @@ Per chain (``MSG_<seed>_chain_<n>[_rep<k>].json``) the script computes the
 pilot's cumulative metrics plus projections onto the five semantic axes and
 writes one parquet shard under
 
-    $DATA_DIR/data/echodrift_stats/confirmatory/<model>/<config>/<task>/<condition>/shards/
+    $DATA_DIR/data/vs_data/stats/<model>/<config>/<task>/<condition>/shards/
 
 The config folder is derived from the decoding recorded in the log
 (``model_default`` when temperature/top-p are absent, else
@@ -105,7 +105,7 @@ def get_paths():
     data_dir = Path(get_data_dir())
     return (
         data_dir / "data" / "vs_data" / "logs",
-        data_dir / "data" / "echodrift_stats" / "confirmatory",
+        data_dir / "data" / "vs_data" / "stats",
     )
 
 

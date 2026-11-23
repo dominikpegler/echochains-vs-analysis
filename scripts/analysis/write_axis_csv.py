@@ -26,8 +26,8 @@ SUB_PATH = sys.argv[1]  # vs_weighted | vs_argmax
 ANALYSIS_NAME = "descriptives_vs" if SUB_PATH == "vs_weighted" else "descriptives_vs_argmax"
 
 DATA_DIR = get_data_dir()
-STATS_DIR = Path(DATA_DIR, "data", "echodrift_stats", SUB_PATH)
-EMB_DIR = Path(DATA_DIR, "data", "echodrift_emb", ANALYSIS_NAME)
+STATS_DIR = Path(DATA_DIR, "data", "exploratory_stats", SUB_PATH)
+EMB_DIR = Path(DATA_DIR, "data", "exploratory_emb", ANALYSIS_NAME)
 
 axis_data = []
 for model in sorted(os.listdir(EMB_DIR)):

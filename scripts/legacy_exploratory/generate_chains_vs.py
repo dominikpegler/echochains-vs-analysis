@@ -60,7 +60,7 @@ AZURE_ENDPOINT = os.environ["AZURE_ENDPOINT"]
 API_VERSION = os.environ["API_VERSION"]
 
 DATA_DIR = get_data_dir()
-LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
+LOGS_DIR = Path(DATA_DIR, "data", "exploratory_logs")
 
 def _find_repo_root():
     try:

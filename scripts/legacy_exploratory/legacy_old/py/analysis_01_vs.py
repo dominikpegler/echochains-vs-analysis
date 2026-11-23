@@ -80,9 +80,9 @@ SUB_PATH = "vs_weighted"
 
 # Paths/config
 DATA_DIR = get_data_dir()
-LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
-STATS_DIR = Path(DATA_DIR, "data", "echodrift_stats")
-STATS_DIR = Path(DATA_DIR, "data", "echodrift_stats", SUB_PATH)
+LOGS_DIR = Path(DATA_DIR, "data", "exploratory_logs")
+STATS_DIR = Path(DATA_DIR, "data", "exploratory_stats")
+STATS_DIR = Path(DATA_DIR, "data", "exploratory_stats", SUB_PATH)
 
 
 os.makedirs(STATS_DIR, exist_ok=True)

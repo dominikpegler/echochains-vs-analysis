@@ -25,7 +25,7 @@ HOP = 200
 ARMS = ["direct", "vs_weighted", "vs_argmax"]
 
 DATA_DIR = get_data_dir()
-BASE = Path(DATA_DIR, "data", "echodrift_stats")
+BASE = Path(DATA_DIR, "data", "exploratory_stats")
 
 
 def stats_dir(arm):
@@ -71,7 +71,7 @@ def main():
         per["weighted_minus_argmax"] = per["vs_weighted"] - per["vs_argmax"]
         print(f"\n===== Mean Sigma ({name}, hop {HOP}) =====")
         print(per.round(6).to_string())
-        out = Path(DATA_DIR, "data", "echodrift_stats", "sigma_exploratory")
+        out = Path(DATA_DIR, "data", "exploratory_stats", "sigma_exploratory")
         out.mkdir(parents=True, exist_ok=True)
         per.to_csv(out / f"sigma_mean_{name}_hop{HOP}.csv")
 
@@ -104,7 +104,7 @@ def main():
     print(agg.drop(columns=["weighted_difference_to_direct"]).round(6).to_string(index=False))
     print(f"\nDirect vs_weighted sigma ratio: {wgt / max(direct, 1e-12):.4f}")
     print(f"VS-weighted vs VS-argmax sigma ratio: {wgt / max(amx, 1e-12):.4f}  (VS-weighted > argmax => H4 direction)")
-    agg.to_csv(Path(DATA_DIR, "data", "echodrift_stats", "sigma_exploratory", "sigma_headline.csv"), index=False)
+    agg.to_csv(Path(DATA_DIR, "data", "exploratory_stats", "sigma_exploratory", "sigma_headline.csv"), index=False)
     print("\nwrote sigma_exploratory/*.csv")
 
 

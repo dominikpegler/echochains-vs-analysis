@@ -10,8 +10,8 @@ CONFIG = sys.argv[2]
 
 PY = "/home/user/miniconda3/envs/echochain/bin/python"
 WORKER = "/home/user/code/echochains-vs-analysis/scripts/legacy_exploratory/run_shard_worker.py"
-DATA_DIR = "/home/user/data_export/echo-chain"
-OUT_DIR = Path(DATA_DIR, "data", "echodrift_stats", SUB_PATH, "shards", "gpt-4.1-nano", SUB_PATH, CONFIG)
+DATA_DIR = "/home/user/Dropbox/data_export/echochains"
+OUT_DIR = Path(DATA_DIR, "data", "exploratory_stats", SUB_PATH, "shards", "gpt-4.1-nano", SUB_PATH, CONFIG)
 STATUS_FILE = OUT_DIR / ".worker_status"
 
 

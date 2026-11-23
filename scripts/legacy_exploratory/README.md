@@ -8,7 +8,7 @@ Everything belonging to the exploratory pilot study lives here:
 - `run_shard_*`, `launch_shards.py`, `monitor_shards.py`, `watchdog_shards.py`,
   `health_logger.py`, `run_vs_embeddings.py`, `process_vs_embeddings_worker.py`
   — pilot shard and embeddings machinery, tied to the old
-  `~/data_export/echo-chain` layout.
+  `~/Dropbox/data_export/echochains` layout.
 - `legacy_old/` — the previous `legacy/` tree (`analysis_01_vs`).
 
 Not used by the confirmatory pipeline in `scripts/confirmatory/`. The

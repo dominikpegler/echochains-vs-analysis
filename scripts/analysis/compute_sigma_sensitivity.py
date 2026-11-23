@@ -27,7 +27,7 @@ HOP = 200
 ARMS = ["direct", "vs_weighted", "vs_argmax"]
 
 DATA_DIR = get_data_dir()
-BASE = Path(DATA_DIR, "data", "echodrift_stats")
+BASE = Path(DATA_DIR, "data", "exploratory_stats")
 
 # Poison inventory (from remote .poison markers, 2026-09-03; 15 weighted + 6 argmax)
 POISON = {

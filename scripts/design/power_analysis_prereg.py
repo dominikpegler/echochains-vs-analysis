@@ -41,7 +41,7 @@ from scipy import stats
 DATA_DIR = Path(
     os.environ.get("DATA_DIR",
                    str(Path.home() / "Dropbox/data_export/echochains")))
-STATS = DATA_DIR / "data" / "echodrift_stats"
+STATS = DATA_DIR / "data" / "exploratory_stats"
 AXES = [
     "valence_neg_to_pos",
     "tone_neutral_to_intense",

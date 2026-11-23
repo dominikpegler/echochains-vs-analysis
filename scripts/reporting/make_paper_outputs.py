@@ -62,8 +62,8 @@ import pub_utils.figures as F
 from pub_utils.tables import TableSpec, write_table
 
 DATA_DIR = get_data_dir()
-LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
-STATS_BASE = Path(DATA_DIR, "data", "echodrift_stats")
+LOGS_DIR = Path(DATA_DIR, "data", "exploratory_logs")
+STATS_BASE = Path(DATA_DIR, "data", "exploratory_stats")
 PUB_BASE = Path(DATA_DIR, "pub")
 MSG_FILE = REPO / "scripts" / "legacy_exploratory" / "exploratory_seeds" / "seed_sentences_50.json"
 

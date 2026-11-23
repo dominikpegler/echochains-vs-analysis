@@ -17,10 +17,10 @@ states each condition's Sigma value at hop 200 (seed/config/axis of the
 plotted cloud; user note: "epsilon" meant Sigma).
 
 Inputs (published exports, no LM calls, no refitting):
-  DATA_DIR/data/echodrift_stats/axis_cumulative_long.csv   (Direct)
-  DATA_DIR/data/echodrift_stats/metrics_cumulative_long.csv (Direct)
-  DATA_DIR/data/echodrift_stats/vs_weighted/axis_cumulative_long.csv
-  DATA_DIR/data/echodrift_stats/vs_weighted/metrics_cumulative_long.csv
+  DATA_DIR/data/exploratory_stats/axis_cumulative_long.csv   (Direct)
+  DATA_DIR/data/exploratory_stats/metrics_cumulative_long.csv (Direct)
+  DATA_DIR/data/exploratory_stats/vs_weighted/axis_cumulative_long.csv
+  DATA_DIR/data/exploratory_stats/vs_weighted/metrics_cumulative_long.csv
 
 Outputs (PDF + PNG 300 dpi) into the deck's img/ directory:
   slide_sigma_headline.png        (merged cloud + Sigma(h) + Sigma hop200;
@@ -97,7 +97,7 @@ LEGEND_KW = dict(
 )
 
 DATA = Path(get_data_dir())
-STATS = DATA / "data/echodrift_stats"
+STATS = DATA / "data/exploratory_stats"
 DECK_IMG = Path("/home/user/write/postdoc-prep/hmc-lab/slides/img")
 OUT = DATA / "pub/slides_vs"
 

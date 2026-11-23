@@ -10,7 +10,7 @@ from echochain.utils import get_data_dir
 SUB_PATH = sys.argv[1]  # vs_weighted | vs_argmax
 
 DATA_DIR = get_data_dir()
-STATS_DIR = Path(DATA_DIR, "data", "echodrift_stats", SUB_PATH)
+STATS_DIR = Path(DATA_DIR, "data", "exploratory_stats", SUB_PATH)
 SHARD_ROOT = STATS_DIR / "shards"
 
 

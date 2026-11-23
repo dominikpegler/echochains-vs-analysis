@@ -26,8 +26,8 @@ RUNNER = "/home/user/code/echochains-vs-analysis/scripts/legacy_exploratory/run_
 
 
 def shard_count(sub_path, config):
-    DATA_DIR = os.path.expanduser(os.environ.get("DATA_DIR", "~/data_export/echo-chain"))
-    p = Path(DATA_DIR, "data", "echodrift_stats", sub_path, "shards", "gpt-4.1-nano", sub_path, config)
+    DATA_DIR = os.path.expanduser(os.environ.get("DATA_DIR", "~/Dropbox/data_export/echochains"))
+    p = Path(DATA_DIR, "data", "exploratory_stats", sub_path, "shards", "gpt-4.1-nano", sub_path, config)
     if not p.exists():
         return 0
     # poison-marked files count toward the 450 target: they are permanently

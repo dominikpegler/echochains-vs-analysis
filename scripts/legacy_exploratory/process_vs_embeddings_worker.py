@@ -16,8 +16,8 @@ MODEL = sys.argv[3] if len(sys.argv) > 3 else "gpt-4.1-nano"
 CONFIG = sys.argv[4]
 
 DATA_DIR = get_data_dir()
-LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
-EMB_DIR = Path(DATA_DIR, "data", "echodrift_emb", ANALYSIS_NAME)
+LOGS_DIR = Path(DATA_DIR, "data", "exploratory_logs")
+EMB_DIR = Path(DATA_DIR, "data", "exploratory_emb", ANALYSIS_NAME)
 
 log_dir = LOGS_DIR / MODEL / SUB_PATH / CONFIG
 model_obj = get_embedding_model()

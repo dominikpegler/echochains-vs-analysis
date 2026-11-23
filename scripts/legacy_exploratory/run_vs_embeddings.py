@@ -7,9 +7,9 @@ SUB_PATH = sys.argv[1]          # vs_weighted | vs_argmax
 ANALYSIS_NAME = sys.argv[2]     # descriptives_vs | descriptives_vs_argmax
 MODEL = "gpt-4.1-nano"
 
-DATA_DIR = os.path.expanduser(os.environ.get("DATA_DIR", "~/data_export/echo-chain"))
-LOGS_DIR = Path(DATA_DIR, "data", "echodrift_logs")
-EMB_DIR = Path(DATA_DIR, "data", "echodrift_emb", ANALYSIS_NAME)
+DATA_DIR = os.path.expanduser(os.environ.get("DATA_DIR", "~/Dropbox/data_export/echochains"))
+LOGS_DIR = Path(DATA_DIR, "data", "exploratory_logs")
+EMB_DIR = Path(DATA_DIR, "data", "exploratory_emb", ANALYSIS_NAME)
 
 PY = "/home/user/miniconda3/envs/echochain/bin/python"
 WORKER = "/home/user/code/echochains-vs-analysis/scripts/legacy_exploratory/process_vs_embeddings_worker.py"
