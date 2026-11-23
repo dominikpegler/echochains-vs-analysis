@@ -10,7 +10,23 @@
 ##SBATCH --account=pXXXXX            # optional, otherwise default project is used
 
 # ---- adjust these ----------------------------------------------------------
-REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"
+# Slurm runs a spooled copy, so BASH_SOURCE points at /var/spool/...;
+# search upward from the submission directory for the repo root.
+submit_dir="${SLURM_SUBMIT_DIR:-$(pwd)}"
+REPO_ROOT=""
+_search="$submit_dir"
+for _ in 1 2 3 4; do
+  if [[ -x "$_search/scripts/confirmatory/serve_model_and_generate.sh" ]]; then
+    REPO_ROOT="$_search"
+    break
+  fi
+  _search="$(dirname "$_search")"
+done
+if [[ -z "$REPO_ROOT" ]]; then
+  echo "error: cannot find the repo from $submit_dir" >&2
+  echo "       submit from the repo root or from scripts/confirmatory/" >&2
+  exit 1
+fi
 RUN_SCRIPT="$REPO_ROOT/scripts/confirmatory/serve_model_and_generate.sh"   # your path
 MODEL="meta-llama/Llama-3.1-8B-Instruct"   # check the exact HF id
 SERVED_NAME="Llama-3.1-8B"
@@ -20,7 +36,11 @@ PORT=8892
 module purge
 module load miniconda3/24.1.2
 eval "$(conda shell.bash hook)"
-conda activate $DATA/envs/vllm_env
+export VLLM_ENV="${VLLM_ENV:-$DATA/envs/vllm_env}"
+conda activate "$VLLM_ENV" || {
+  echo "error: cannot activate $VLLM_ENV (set VLLM_ENV to override)" >&2
+  exit 1
+}
 
 # Keep the weights out of the small $HOME quota
 export HF_HOME="${DATA:-$HOME}/hf_cache"
