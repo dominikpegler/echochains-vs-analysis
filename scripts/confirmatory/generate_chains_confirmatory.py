@@ -141,8 +141,8 @@ SEED FILE SCHEMA (--seeds-file, default $DATA_DIR/data/corpus/sampler/vs_confirm
   match the task (expand+compress: long; the other three tasks: sentence).
 
 OUTPUT LAYOUT (under DATA_DIR/data by default, overridable):
-  echodrift_logs/<model>/confirmatory/<task>/<condition>/MSG_<seed>_chain_<chain>.json
-  echodrift_logs/<model>/confirmatory/<task>/<condition>/FAILED_MSG_<seed>_chain_<chain>.json
+  vs_data/logs/<model>/confirmatory/<task>/<condition>/MSG_<seed>_chain_<chain>.json
+  vs_data/logs/<model>/confirmatory/<task>/<condition>/FAILED_MSG_<seed>_chain_<chain>.json
       (skipped-chain record: failure detail, failed raw responses, hop log)
   echodrift_confirmatory_cache/<backend>-<model>/<task>-<condition>.jsonl
 
@@ -1365,7 +1365,7 @@ def status_report(args) -> int:
     if args.logs_root:
         logs_root = Path(os.path.expanduser(args.logs_root))
     else:
-        logs_root = get_data_dir() / "data" / "echodrift_logs"
+        logs_root = get_data_dir() / "data" / "vs_data" / "logs"
     if not logs_root.exists():
         print(f"logs root does not exist: {logs_root}")
         return 2
@@ -1459,7 +1459,7 @@ def main(argv=None) -> int:
                              "(default: count the seed file)")
     parser.add_argument("--logs-root",
                         help="override the logs root "
-                             "(default DATA_DIR/data/echodrift_logs)")
+                             "(default DATA_DIR/data/vs_data/logs)")
     parser.add_argument("--cache-root",
                         help="override the cache root "
                              "(default DATA_DIR/data/echodrift_confirmatory_cache)")
@@ -1497,7 +1497,7 @@ def main(argv=None) -> int:
     else:
         logs_root = (Path(os.path.expanduser(args.logs_root))
                      if args.logs_root
-                     else get_data_dir() / "data" / "echodrift_logs")
+                     else get_data_dir() / "data" / "vs_data" / "logs")
         cache_root = (Path(os.path.expanduser(args.cache_root))
                       if args.cache_root
                       else get_data_dir() / "data" / "echodrift_confirmatory_cache")

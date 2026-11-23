@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Staged publication-output builder for the VS paper (figures, tables, JSON).
 
-Restructure of the output half of scripts/analysis/analysis_01_descriptives_vs.py
+Restructure of the output half of scripts/analysis/analysis_01_descriptives_exploratory.ipynb
 (2026-10-03): color/label/geometry changes must not require reprocessing
 the full study. The merged notebook stays the entry point for a complete
 re-analysis; this script regenerates only the publication outputs it

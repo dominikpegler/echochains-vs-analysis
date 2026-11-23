@@ -265,7 +265,7 @@ def main(argv=None) -> int:
         data_root = Path(os.path.expanduser(data_dir))
         logs_root = (Path(os.path.expanduser(args.logs_root))
                      if args.logs_root
-                     else data_root / "data" / "echodrift_logs")
+                     else data_root / "data" / "vs_data" / "logs")
         out_dir = (Path(os.path.expanduser(args.output_dir))
                    if args.output_dir
                    else data_root / "data" / "echodrift_confirmatory_qc"

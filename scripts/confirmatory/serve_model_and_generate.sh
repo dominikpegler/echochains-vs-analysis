@@ -120,7 +120,7 @@ Generation flags (passed to generate_chains_confirmatory.py):
   --top-p F                decoding top-p (give with --temperature)
   --seeds-file PATH        default: $DATA_DIR/data/corpus/sampler/
                            vs_confirmatory_seeds_final.jsonl
-  --logs-root PATH         default: $DATA_DIR/data/echodrift_logs
+  --logs-root PATH         default: $DATA_DIR/data/vs_data/logs
   --cache-root PATH        default: $DATA_DIR/data/echodrift_confirmatory_cache
   --python PY              interpreter for the generator and probes
                            (default: python3; the serving env's python)

@@ -14,7 +14,7 @@ Run from the repository root:
     DATA_DIR=/home/user/Dropbox/data_export/echochains \
       python scripts/design/power_analysis_prereg.py
 
-or execute/sync the paired notebook `power_analysis_prereg.ipynb`.
+or run the notebook `power_analysis_prereg.ipynb`.
 """
 
 from __future__ import annotations

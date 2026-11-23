@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Slide-only figures for the EchoChains VS paper (HMC lab deck).
 
-Separate from the paper's analysis_01_descriptives_vs.py: produces deck
+Separate from the paper's analysis_01_descriptives_exploratory.py: produces deck
 variants from the same verified exports, without touching the manuscript
 figures. Deck TODO (index.org, VS block): the VS slides re-used the
 paper's fig_sigma_headline / fig_sigma_per_axis_curves; mode sampling
@@ -506,7 +506,7 @@ def sigma_config_figure(summaries):
 
     Moved off the headline (pass 4, user: a detail someone might ask
     about). The jitter dots are restored to match the paper's panel
-    (analysis_01_descriptives_vs.py: scatter of the 50 per-seed
+    (analysis_01_descriptives_exploratory.py: scatter of the 50 per-seed
     mean_sigma values per config and condition, rng(0), jitter window
     +-0.12, s=4, alpha 0.35); the slide variant had dropped them.
     """

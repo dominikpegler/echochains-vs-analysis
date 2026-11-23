@@ -1,30 +1,3 @@
-# ---
-# jupyter:
-#   jupytext:
-#     cell_metadata_filter: -all
-#     formats: ipynb,py//py:percent
-#     notebook_metadata_filter: kernelspec,language_info
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#       jupytext_version: 1.18.1
-#   kernelspec:
-#     display_name: Python 3 (ipykernel)
-#     language: python
-#     name: python3
-#   language_info:
-#     codemirror_mode:
-#       name: ipython
-#       version: 3
-#     file_extension: .py
-#     mimetype: text/x-python
-#     name: python
-#     nbconvert_exporter: python
-#     pygments_lexer: ipython3
-#     version: 3.11.11
-# ---
-
 # %% [markdown]
 # # Confirmatory corpus sampler for the verbalized-sampling study
 #
@@ -75,7 +48,7 @@
 # defaults:
 #
 # ```bash
-# python scripts/analysis/corpus_sampler_vs.py
+# python scripts/confirmatory/corpus_sampler.py
 # ```
 #
 # Output always goes to `$DATA_DIR/data/corpus/sampler` (the DATA_DIR
@@ -84,7 +57,7 @@
 # screened rows to disk); the test still writes under DATA_DIR:
 #
 # ```bash
-# python scripts/analysis/corpus_sampler_vs.py \
+# python scripts/confirmatory/corpus_sampler.py \
 #     --manifest /path/to/test_candidates.jsonl --quota 2 --reserve 1
 # ```
 #

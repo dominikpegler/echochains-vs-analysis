@@ -43,26 +43,27 @@ under iterated LM paraphrasing, using a two-component decomposition
 
 The repo is a collection of runnable entrypoints under `scripts/`; there is no
 installable library. Everything imports the shared `echochain` package and
-`pub_utils` from the editable installs above. Notebooks use jupytext
-(`py:percent`): the `.py` under `scripts/analysis/` is the source of truth and the
-tracked `.ipynb` is its companion (run `jupytext --sync scripts/analysis/<name>.py`
-after editing the `.py`).
+`pub_utils` from the editable installs above. Notebooks are standalone
+`.ipynb` files; there is no jupytext pairing, and runnable scripts live next to
+them as plain `.py` files.
 
 - `scripts/confirmatory/` — confirmatory study setup + collection:
-  - `corpus_sampler_vs.py` / `.ipynb` — preregistered seed draw
+  - `corpus_sampler.py` / `.ipynb` — preregistered seed draw
   - `axes_validation.ipynb` — semantic-axis validation before the freeze
   - `generate_chains_confirmatory.py` (frozen implementation) and
     `generate_chains_confirmatory.ipynb` (local prototype driver)
   - `serve_model.sh` (vLLM launcher: local GPU and ASC-5 via `--slurm`)
   - `qc_chains_confirmatory.py`, `test_confirmatory.py`
   - `vs_task_prompts.py`, `tasks_registry.py` (locked prompts)
-- `scripts/analysis/` — analysis notebooks with their jupytext `.py` twins
-  (`analysis_01_descriptives_vs`, `analysis_02_hypothesis_tests_vs`), plus
+- `scripts/preprocessing/` — chain-log exports feeding the analyses:
+  `write_stats_confirmatory.py` (incremental walker computing the pilot's
+  cumulative metrics and axis scores for the confirmatory logs; GPU required)
+- `scripts/analysis/` — analysis notebooks plus
   post-hoc computation from the shard exports (`write_stats_long.py`,
-  `write_vs_axis_csv.py`, `compute_sigma.py`, `compute_sigma_exploratory.py`,
+  `write_axis_csv.py`, `compute_sigma.py`, `compute_sigma_exploratory.py`,
   `compute_sigma_sensitivity.py`).
 - `scripts/design/` — study design, sample-size and power analysis:
-  `design_size_vs.py`, `power_analysis_design_vs.py`,
+  `design_size.py`, `power_analysis_design.py`,
   `power_analysis_prereg.py` (plus its `.ipynb`).
 - `scripts/reporting/` — publication outputs written to `DATA_DIR/pub/`:
   `make_paper_outputs.py`, `make_slide_figures.py`.
@@ -71,16 +72,28 @@ after editing the `.py`).
   seeds (`exploratory_seeds/`), the shard/embeddings machinery, and the
   old `legacy/` tree (`analysis_01_vs`).
 
-The descriptive analysis (tables, figures, `metrics_pub.json`) is
-`analysis_01_descriptives_vs`, or the staged re-export in
-`scripts/reporting/make_paper_outputs.py`:
+Study assets under `DATA_DIR` are kept apart by a `confirmatory` path component.
+Exploratory (pilot) assets keep their existing paths (`pub/descriptives*`,
+`data/echodrift_stats/{,vs_weighted,vs_argmax}`) and are frozen; confirmatory
+chain logs live under `data/vs_data/logs/<model>/confirmatory/<task>/<condition>/`
+(`<model>` may be an HF id with an org prefix), and confirmatory analysis exports
+under `data/echodrift_stats/confirmatory/<model>/<config>/<task>/<condition>/`
+and `pub/confirmatory/<analysis>/`.
 
-    python scripts/analysis/analysis_01_descriptives_vs.py
+The exploratory descriptive analysis (tables, figures, `metrics_pub.json`) is
+`scripts/analysis/analysis_01_descriptives_exploratory.ipynb` (run all cells), or
+the staged re-export in `scripts/reporting/make_paper_outputs.py`:
+
+    python scripts/reporting/make_paper_outputs.py --stage all
+
+The confirmatory descriptives (coverage, final-hop tables, variance and drift
+summaries) are in `scripts/analysis/analysis_01_descriptives_confirmatory.ipynb`;
+they read the exports written by
+`scripts/preprocessing/write_stats_confirmatory.py`.
 
 The preregistered H1--H4 hypothesis tests live in
-`analysis_02_hypothesis_tests_vs` (a stub to be filled in):
-
-    python scripts/analysis/analysis_02_hypothesis_tests_vs.py
+`scripts/analysis/analysis_02_hypothesis_tests.ipynb` (a stub notebook to be
+filled in).
 
 ## Related repositories
 
